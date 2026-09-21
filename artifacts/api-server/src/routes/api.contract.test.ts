@@ -28,6 +28,21 @@ test("generic fallback rejects private and unsafe URLs", () => withServer(async 
   assert.equal(response.status, 400);
 }));
 
+test("unknown public domains are not fetched and return UNVERIFIED unsupported", () => withServer(async (base) => {
+  const response = await fetch(`${base}/v1/public/verify?url=${encodeURIComponent("https://unknown.example/item")}`);
+  assert.equal(response.status, 200);
+  const body = await response.json() as { status:string; actionable:boolean; reason:string; observations:unknown[]; checked_at:string };
+  assert.deepEqual(body, { status:"UNVERIFIED", actionable:false, reason:"UNSUPPORTED_DOMAIN", observations:[], checked_at:body.checked_at });
+}));
+
+test("admin trusted-domain extension is closed when no secret is configured", () => withServer(async (base) => {
+  const response = await fetch(`${base}/v1/admin/trusted-domains`, {
+    method:"POST", headers:{"content-type":"application/json","x-admin-token":"guess"},
+    body:JSON.stringify({domain:"partner.example"}),
+  });
+  assert.equal(response.status, 403);
+}));
+
 test("public API enforces strict minute rate limit", () => withServer(async (base) => {
   let status = 200;
   for (let i = 0; i < 31; i++) status = (await fetch(`${base}/v1/public/source-health`, { headers: { "x-forwarded-for": "203.0.113.9" } })).status;

@@ -13,8 +13,15 @@
 - `APIFY_TOKEN`
 - `BRIGHT_DATA_TOKEN`
 - `ENABLE_PLAYWRIGHT`（最終手段。規約上許可される対象だけ）
+- `ADMIN_API_TOKEN`（trusted-domain allowlistを管理者が明示的に拡張する場合）
 
 認証情報がないプロバイダーは安全に無効化されます。
+
+## URL取得とSSRF防御
+
+公開URL検証は登録済みtrusted domainだけを取得します。未知のドメインは取得せず、`UNVERIFIED` / `UNSUPPORTED_DOMAIN`を返します。localhost、プライベート／link-local／multicast／unspecified IP、IPv6ローカル範囲、クラウドmetadata、URL内認証情報、HTTP(S)以外を拒否します。DNS解決結果と各redirect先を再検査し、応答時間・サイズ・redirect回数に上限を設定しています。
+
+管理者がドメインを追加する場合だけ、`POST /api/v1/admin/trusted-domains`へ`x-admin-token`ヘッダーと`{"domain":"example.com"}`を送ります。トークンは`ADMIN_API_TOKEN` Secretに保存し、画面、プロンプト、レスポンスへ記載しないでください。追加は現在のプロセス中だけ有効です。
 
 ## 2. 公開
 

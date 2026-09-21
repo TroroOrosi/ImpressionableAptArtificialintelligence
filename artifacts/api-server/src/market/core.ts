@@ -4,7 +4,8 @@ export type VerificationStatus = "VERIFIED_STRONG" | "VERIFIED_SINGLE" | "CONFLI
 export type Identity = Record<string, string | string[] | null | undefined>;
 export type Evidence = {
   value: number; currency: string; fetched_at: string; freshness_seconds: number;
-  remaining_seconds?: number | null; [key: string]: unknown;
+  remaining_seconds?: number | null; source?: string; source_tier?: number;
+  evidence_hash?: string; url?: string; [key: string]: unknown;
 };
 
 const configured = (env?: string) => !env || Boolean(process.env[env]);
@@ -32,14 +33,24 @@ export const auctionFreshnessLimit = (remaining?: number | null) =>
 
 export function verifyEvidence(items: Evidence[]) {
   if (!items.length) return { status: "UNVERIFIED" as const, actionable: false, reason: "価格観測がありません" };
-  if (items.some((i) => i.freshness_seconds > auctionFreshnessLimit(i.remaining_seconds))) {
+  const uniquePayloads = new Map<string, Evidence>();
+  for (const item of items) {
+    const payloadKey = item.evidence_hash || evidenceHash([item.source, item.url, item.value, item.currency, item.fetched_at]);
+    if (!uniquePayloads.has(payloadKey)) uniquePayloads.set(payloadKey, item);
+  }
+  const deduped = [...uniquePayloads.values()];
+  if (deduped.some((i) => i.freshness_seconds > auctionFreshnessLimit(i.remaining_seconds))) {
     return { status: "STALE" as const, actionable: false, reason: "鮮度ポリシーを満たしていません" };
   }
-  const min = Math.min(...items.map((i) => i.value));
-  const max = Math.max(...items.map((i) => i.value));
+  const min = Math.min(...deduped.map((i) => i.value));
+  const max = Math.max(...deduped.map((i) => i.value));
   if (max > min * 1.08) return { status: "CONFLICT" as const, actionable: false, reason: "重要な価格差があります" };
-  const status = items.length > 1 ? "VERIFIED_STRONG" as const : "VERIFIED_SINGLE" as const;
-  return { status, actionable: true, reason: items.length > 1 ? "独立した複数ソースが合意" : "単一の一次観測を確認" };
+  const sources = new Set(deduped.map((i) => (i.source || new URL(i.url || "https://unknown.invalid").hostname).toLowerCase()));
+  const hasAuthoritative = deduped.some((i) => i.source_tier === 1);
+  const independent = sources.size >= 2;
+  const strong = independent && (deduped.length >= 2 || hasAuthoritative);
+  const status = strong ? "VERIFIED_STRONG" as const : "VERIFIED_SINGLE" as const;
+  return { status, actionable: true, reason: strong ? "独立した複数ソースが合意" : "重複を除外した単一ソース観測" };
 }
 
 export function isActionable(status: VerificationStatus, freshness: number, remaining?: number | null) {

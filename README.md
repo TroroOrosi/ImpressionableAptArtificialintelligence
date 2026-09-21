@@ -16,6 +16,8 @@ AIによる価格比較、オークション監視、短期リセール調査の
 
 API認証情報はReplit Secrets／環境変数だけに保存してください。レスポンスには含めません。ログイン回避、非公開データ取得、robots制限、CAPTCHA、アンチボット対策、利用規約を回避する独自スクレイピングは行いません。検索スニペットは発見用途に限定し、価格検証の証拠にはしません。
 
+公開URL取得はtrusted-domain allowlist、DNS/IP検査、redirect先再検査、タイムアウト、2MB応答上限を適用します。未知のドメインは取得せず`UNVERIFIED`として返します。同一upstream sourceまたは同一evidence hashの観測は重複確認として数えず、`VERIFIED_STRONG`には独立した証拠を要求します。
+
 ## 起動
 
 アプリはWebとAPIの2サービスで動作します。`/api/healthz` が正常性確認です。プロバイダー用Secretがない場合、そのプロバイダーだけが無効になり、汎用JSON-LD検証など利用可能な機能は継続します。

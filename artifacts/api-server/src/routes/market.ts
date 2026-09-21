@@ -1,6 +1,8 @@
 import { Router, type IRouter } from "express";
+import { timingSafeEqual } from "node:crypto";
 import { evidenceHash, providerRegistry, verifyEvidence, computeCoverage } from "../market/core";
 import { buildSetupBundle } from "../market/setupBundle";
+import { addTrustedDomain, safeFetchPublicUrl } from "../market/urlSafety";
 
 const router: IRouter = Router();
 const started = Date.now();
@@ -27,14 +29,15 @@ router.use("/v1/public", (req, res, next) => {
   next(); return;
 });
 
-const blockedHost = (host: string) => /^(localhost|127\.|10\.|192\.168\.|169\.254\.|\[?::1)/i.test(host);
 async function genericVerify(raw: string) {
-  let url: URL;
-  try { url = new URL(raw); } catch { throw new Error("有効なURLを指定してください"); }
-  if (url.protocol !== "https:" || blockedHost(url.hostname)) throw new Error("許可されていないURLです");
-  const response = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(8000), headers: { "user-agent": "MarketIntelMCP/1.0 (+read-only verification)" } });
-  if (!response.ok) throw new Error(`取得失敗: ${response.status}`);
-  const html = await response.text();
+  let fetchResult: Awaited<ReturnType<typeof safeFetchPublicUrl>>;
+  try { fetchResult = await safeFetchPublicUrl(raw); }
+  catch (error) {
+    const reason = error instanceof Error ? error.message : "unsupported_url";
+    if (reason === "unsupported_domain") return { status:"UNVERIFIED", actionable:false, reason:"UNSUPPORTED_DOMAIN", observations:[], checked_at:new Date().toISOString() };
+    throw error;
+  }
+  const { body: html, finalUrl: url } = fetchResult;
   const scripts = [...html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)];
   let product: Record<string, unknown> | undefined;
   for (const match of scripts) {
@@ -67,6 +70,16 @@ router.get("/v1/compare", (req,res) => res.json(emptySearch(String(req.query.q||
 router.get("/v1/admin/summary", (_req,res) => res.json({ providers_total:providerRegistry.length,providers_available:providerRegistry.filter(p=>p.configured).length,registry_coverage_percent:computeCoverage(trusted).measured_coverage_percent,conflicts_24h:0,stale_24h:0,observations_24h:0,uptime_seconds:Math.floor((Date.now()-started)/1000) }));
 router.get("/v1/admin/conflicts", (_req,res) => res.json([]));
 router.get("/v1/admin/observations", (_req,res) => res.json([]));
+router.post("/v1/admin/trusted-domains", (req,res) => {
+  const configuredToken = process.env.ADMIN_API_TOKEN;
+  const suppliedToken = req.get("x-admin-token");
+  if (!configuredToken || !suppliedToken || suppliedToken.length !== configuredToken.length ||
+      !timingSafeEqual(Buffer.from(suppliedToken), Buffer.from(configuredToken))) {
+    res.status(403).json({ error:"forbidden" }); return;
+  }
+  try { res.status(201).json({ domain:addTrustedDomain(String(req.body?.domain || "")) }); }
+  catch (error) { res.status(400).json({ error:error instanceof Error ? error.message : "invalid_domain" }); }
+});
 
 router.get("/v1/setup-bundle", (req,res) => {
   const forwardedProto = req.get("x-forwarded-proto")?.split(",")[0]?.trim();

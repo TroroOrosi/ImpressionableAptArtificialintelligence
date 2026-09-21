@@ -27,9 +27,25 @@ test("identity mismatch catches material attributes", () => {
 
 test("evidence consensus and conflict", () => {
   const base = { currency: "JPY", fetched_at: new Date().toISOString(), freshness_seconds: 60 };
-  assert.equal(verifyEvidence([{ ...base, value: 10000 }, { ...base, value: 10300 }]).status, "VERIFIED_STRONG");
-  assert.equal(verifyEvidence([{ ...base, value: 10000 }, { ...base, value: 15000 }]).status, "CONFLICT");
+  assert.equal(verifyEvidence([{ ...base, value: 10000, source:"rakuten" }, { ...base, value: 10300, source:"ebay" }]).status, "VERIFIED_STRONG");
+  assert.equal(verifyEvidence([{ ...base, value: 10000, source:"rakuten" }, { ...base, value: 15000, source:"ebay" }]).status, "CONFLICT");
   assert.equal(verifyEvidence([]).status, "UNVERIFIED");
+});
+
+test("same upstream or cached payload cannot create strong verification", () => {
+  const base = { currency:"JPY", fetched_at:new Date().toISOString(), freshness_seconds:30 };
+  assert.equal(verifyEvidence([
+    { ...base, value:10000, source:"same-api", evidence_hash:"payload-a" },
+    { ...base, value:10020, source:"same-api", evidence_hash:"payload-b" },
+  ]).status, "VERIFIED_SINGLE");
+  assert.equal(verifyEvidence([
+    { ...base, value:10000, source:"api-a", evidence_hash:"shared-cache" },
+    { ...base, value:10000, source:"api-b", evidence_hash:"shared-cache" },
+  ]).status, "VERIFIED_SINGLE");
+  assert.equal(verifyEvidence([
+    { ...base, value:10000, source:"official-api", source_tier:1 },
+    { ...base, value:10100, source:"independent-market" },
+  ]).status, "VERIFIED_STRONG");
 });
 
 test("stale auction is rejected", () => {
