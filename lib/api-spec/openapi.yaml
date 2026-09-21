@@ -271,9 +271,14 @@ components:
         ical: { type: string }
     SetupBundle:
       type: object
-      required: [mcp_instructions, automation_prompt, schedules, reproduction_prompt]
+      required: [deployed_base_url, mcp_instructions, automation_prompt, schedules, full_schedule_pack, core_6_pack, reproduction_prompt, app_reproduction_prompt, chatgpt_setup_prompt]
       properties:
+        deployed_base_url: { type: string, format: uri }
         mcp_instructions: { type: string }
         automation_prompt: { type: string }
         schedules: { type: array, maxItems: 15, items: { $ref: "#/components/schemas/ScheduleItem" } }
+        full_schedule_pack: { type: array, minItems: 14, maxItems: 14, items: { $ref: "#/components/schemas/ScheduleItem" } }
+        core_6_pack: { type: array, minItems: 6, maxItems: 6, items: { $ref: "#/components/schemas/ScheduleItem" } }
         reproduction_prompt: { type: string }
+        app_reproduction_prompt: { type: string }
+        chatgpt_setup_prompt: { type: string }

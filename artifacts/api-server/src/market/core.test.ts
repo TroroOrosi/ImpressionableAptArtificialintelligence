@@ -18,6 +18,7 @@ test("provider routing preserves official-first priority", () => {
 test("missing optional credentials disable providers gracefully", () => {
   const optional = providerRegistry.filter((p) => p.env);
   assert.ok(optional.every((p) => typeof p.configured === "boolean"));
+  assert.ok(optional.filter((p) => !p.configured).every((p) => p.configured === false));
 });
 
 test("identity mismatch catches material attributes", () => {
@@ -28,6 +29,7 @@ test("evidence consensus and conflict", () => {
   const base = { currency: "JPY", fetched_at: new Date().toISOString(), freshness_seconds: 60 };
   assert.equal(verifyEvidence([{ ...base, value: 10000 }, { ...base, value: 10300 }]).status, "VERIFIED_STRONG");
   assert.equal(verifyEvidence([{ ...base, value: 10000 }, { ...base, value: 15000 }]).status, "CONFLICT");
+  assert.equal(verifyEvidence([]).status, "UNVERIFIED");
 });
 
 test("stale auction is rejected", () => {

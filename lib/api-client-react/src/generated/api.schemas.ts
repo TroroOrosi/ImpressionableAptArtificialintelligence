@@ -166,11 +166,24 @@ export interface ScheduleItem {
 }
 
 export interface SetupBundle {
+  deployed_base_url: string;
   mcp_instructions: string;
   automation_prompt: string;
   /** @maxItems 15 */
   schedules: ScheduleItem[];
+  /**
+     * @minItems 14
+     * @maxItems 14
+     */
+  full_schedule_pack: ScheduleItem[];
+  /**
+     * @minItems 6
+     * @maxItems 6
+     */
+  core_6_pack: ScheduleItem[];
   reproduction_prompt: string;
+  app_reproduction_prompt: string;
+  chatgpt_setup_prompt: string;
 }
 
 export type VerifyCurrentPriceParams = {

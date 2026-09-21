@@ -9,7 +9,8 @@ AIによる価格比較、オークション監視、短期リセール調査の
 - 検証状態: `VERIFIED_STRONG` / `VERIFIED_SINGLE` / `CONFLICT` / `STALE` / `UNVERIFIED`
 - 商品識別、証拠投票、オークション鮮度ポリシー、価格履歴、落札相場、ソース健全性
 - trusted-source registry に対する実測カバレッジ（インターネット全体の100%網羅は主張しません）
-- ChatGPT接続手順と最大15件のスケジュール作成パック
+- ChatGPT接続手順、現在の監視構成を再現するFull Schedule Pack（14件）、枠が少ないユーザー向けCore 6 Pack
+- 実行時の公開ベースURL自動挿入
 
 ## セキュリティ
 

@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
 import { evidenceHash, providerRegistry, verifyEvidence, computeCoverage } from "../market/core";
+import { buildSetupBundle } from "../market/setupBundle";
 
 const router: IRouter = Router();
 const started = Date.now();
@@ -67,18 +68,14 @@ router.get("/v1/admin/summary", (_req,res) => res.json({ providers_total:provide
 router.get("/v1/admin/conflicts", (_req,res) => res.json([]));
 router.get("/v1/admin/observations", (_req,res) => res.json([]));
 
-const schedules = [
-  ["朝の仕入れ候補","毎朝、対象キーワードを検索し、現在価格・fetched_at・検証状態・手数料・想定ROI・落札相場・流動性を示す。CONFLICT/STALE/UNVERIFIEDは除外。","BEGIN:VEVENT\nRRULE:FREQ=DAILY;BYHOUR=8;BYMINUTE=0\nEND:VEVENT"],
-  ["昼の価格差監視","昼に価格差を再確認し、新規の検証済み候補だけを報告する。","BEGIN:VEVENT\nRRULE:FREQ=DAILY;BYHOUR=12;BYMINUTE=30\nEND:VEVENT"],
-  ["終了間近オークション","終了30分以内を再検証し、10分以内は2分以内、30分以内は5分以内の観測だけを採用する。","BEGIN:VEVENT\nRRULE:FREQ=DAILY;BYHOUR=20;BYMINUTE=30\nEND:VEVENT"],
-  ["日次改善","結果精度、失敗ソース、trusted-source registry の健全性とカバレッジを監査し、既存監視条件を改善する。別の監査枠は作らない。","BEGIN:VEVENT\nRRULE:FREQ=DAILY;BYHOUR=22;BYMINUTE=0\nEND:VEVENT"],
-].map(([name,prompt,ical])=>({name,prompt,ical}));
-router.get("/v1/setup-bundle", (_req,res) => res.json({
-  mcp_instructions:"公開後のURLに /api/mcp を付けて ChatGPT の Remote MCP 接続先として登録します。認証情報はReplit Secretsだけに保存します。",
-  automation_prompt:"Market Intel MCPを一次価格検証器として使用。actionable=true かつ VERIFIED_STRONG/VERIFIED_SINGLE、現在価格、fetched_at、手数料控除後ROI、sold comps、流動性を必須化。終了間近は再検証し、CONFLICT/STALE/UNVERIFIEDを除外。最大15件。",
-  schedules,
-  reproduction_prompt:"ReplitでこのMarket Intel MCPアプリを作成し、任意のAPI認証情報をSecretsへ追加して公開。Remote MCPをChatGPTへ接続後、セットアップバンドルのautomation_promptを貼り付け、既存予定を重複なく作成または更新してください。"
-}));
+router.get("/v1/setup-bundle", (req,res) => {
+  const forwardedProto = req.get("x-forwarded-proto")?.split(",")[0]?.trim();
+  const proto = forwardedProto === "https" || forwardedProto === "http" ? forwardedProto : req.protocol;
+  const forwardedHost = req.get("x-forwarded-host")?.split(",")[0]?.trim();
+  const candidateHost = forwardedHost || req.get("host") || "";
+  const host = /^[a-z0-9.-]+(?::\d+)?$/i.test(candidateHost) ? candidateHost : "localhost";
+  res.json(buildSetupBundle(`${proto}://${host}`));
+});
 
 const toolNames = ["search_products","search_auctions","fetch_listing","get_price_history","get_sold_comps","compare_offers","verify_current_price","get_source_health","get_source_coverage"];
 router.post("/mcp", async (req,res) => {

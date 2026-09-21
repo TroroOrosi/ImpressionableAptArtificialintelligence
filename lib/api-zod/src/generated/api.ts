@@ -444,9 +444,16 @@ export const ListObservationsResponse = zod.array(ListObservationsResponseItem)
 
 export const getSetupBundleResponseSchedulesMax = 15;
 
+export const getSetupBundleResponseFullSchedulePackMin = 14;
+export const getSetupBundleResponseFullSchedulePackMax = 14;
+
+export const getSetupBundleResponseCore6PackMin = 6;
+export const getSetupBundleResponseCore6PackMax = 6;
+
 
 
 export const GetSetupBundleResponse = zod.object({
+  "deployed_base_url": zod.string().url(),
   "mcp_instructions": zod.string(),
   "automation_prompt": zod.string(),
   "schedules": zod.array(zod.object({
@@ -454,7 +461,19 @@ export const GetSetupBundleResponse = zod.object({
   "prompt": zod.string(),
   "ical": zod.string()
 })).max(getSetupBundleResponseSchedulesMax),
-  "reproduction_prompt": zod.string()
+  "full_schedule_pack": zod.array(zod.object({
+  "name": zod.string(),
+  "prompt": zod.string(),
+  "ical": zod.string()
+})).min(getSetupBundleResponseFullSchedulePackMin).max(getSetupBundleResponseFullSchedulePackMax),
+  "core_6_pack": zod.array(zod.object({
+  "name": zod.string(),
+  "prompt": zod.string(),
+  "ical": zod.string()
+})).min(getSetupBundleResponseCore6PackMin).max(getSetupBundleResponseCore6PackMax),
+  "reproduction_prompt": zod.string(),
+  "app_reproduction_prompt": zod.string(),
+  "chatgpt_setup_prompt": zod.string()
 })
 
 

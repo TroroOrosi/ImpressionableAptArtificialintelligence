@@ -38,7 +38,18 @@ ChatGPTのRemote MCP接続先に次を指定します。
 
 ## 4. スケジュールを作成・更新
 
-管理画面の「ChatGPTセットアップ」または `/api/v1/setup-bundle` にある `automation_prompt` をChatGPTへ貼り付けます。最大15件までとし、既存の同名予定は重複作成せず更新してください。
+管理画面の「ChatGPTセットアップ」または `/api/v1/setup-bundle` にある `chatgpt_setup_prompt` をChatGPTへ貼り付けます。通常は現在の監視構成を再現する `full_schedule_pack`（14件）、タスク枠が少ない場合は `core_6_pack`（6件）を使います。同名予定は重複作成せず更新してください。
+
+セットアップAPIは受信した公開ホスト情報から `deployed_base_url` を生成し、MCP URLと公開GET URLを全スケジュールプロンプトへ自動挿入します。URLを手作業で置換する必要はありません。
+
+Core 6 Pack:
+
+1. 終了2時間以内スキャン
+2. 終了12時間以内スキャン
+3. C2C価格差スキャン
+4. 固定買取・新品セール裁定スキャン
+5. 朝の統合レポート
+6. 日次改善
 
 全タスクで次を必須にします。
 

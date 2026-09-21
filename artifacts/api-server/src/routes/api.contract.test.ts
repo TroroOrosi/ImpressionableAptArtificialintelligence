@@ -40,3 +40,41 @@ test("MCP schema exposes every required tool", () => withServer(async (base) => 
   const names = body.result.tools.map((tool: { name: string }) => tool.name);
   for (const required of ["search_products","search_auctions","fetch_listing","get_price_history","get_sold_comps","compare_offers","verify_current_price","get_source_health","get_source_coverage"]) assert.ok(names.includes(required));
 }));
+
+test("setup bundle contains Full 14 and exact Core 6 packs with deployed URL", () => withServer(async (base) => {
+  const response = await fetch(`${base}/v1/setup-bundle`, {
+    headers: { "x-forwarded-proto": "https", "x-forwarded-host": "intel.example.com" },
+  });
+  const body = await response.json() as {
+    deployed_base_url: string;
+    full_schedule_pack: Array<{ name: string; prompt: string; ical: string }>;
+    core_6_pack: Array<{ name: string; prompt: string; ical: string }>;
+    app_reproduction_prompt: string;
+    chatgpt_setup_prompt: string;
+  };
+  assert.equal(body.deployed_base_url, "https://intel.example.com");
+  assert.equal(body.full_schedule_pack.length, 14);
+  assert.deepEqual(body.core_6_pack.map((x) => x.name), [
+    "終了2時間以内スキャン", "終了12時間以内スキャン", "C2C価格差スキャン",
+    "固定買取・新品セール裁定スキャン", "朝の統合レポート", "日次改善",
+  ]);
+  for (const schedule of body.full_schedule_pack) {
+    assert.match(schedule.prompt, /https:\/\/intel\.example\.com\/api\/mcp/);
+    assert.match(schedule.prompt, /CONFLICT\/STALE\/UNVERIFIED/);
+    assert.match(schedule.prompt, /推測しない/);
+    assert.match(schedule.ical, /BEGIN:VCALENDAR[\s\S]*RRULE:/);
+  }
+  assert.match(body.app_reproduction_prompt, /Replit Secrets/);
+  assert.match(body.chatgpt_setup_prompt, /14件/);
+}));
+
+test("setup and health responses never expose credential environment names or values", () => withServer(async (base) => {
+  const responses = await Promise.all([
+    fetch(`${base}/v1/setup-bundle`).then((r) => r.text()),
+    fetch(`${base}/v1/public/source-health`).then((r) => r.text()),
+  ]);
+  const combined = responses.join("\n");
+  for (const secretName of ["YAHOO_CLIENT_ID","RAKUTEN_APP_ID","EBAY_CLIENT_ID","KEEPA_API_KEY","SERPAPI_KEY","APIFY_TOKEN","BRIGHT_DATA_TOKEN"]) {
+    assert.equal(combined.includes(secretName), false);
+  }
+}));
