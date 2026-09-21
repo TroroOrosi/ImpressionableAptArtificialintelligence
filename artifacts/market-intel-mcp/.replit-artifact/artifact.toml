@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Market Intel MCP"
+description = "Japanese-first market intelligence web app for AI-driven price comparison and auction monitoring, with Remote MCP, public read-only REST endpoints, evidence-based verification, source health and coverage reporting, and an admin dashboard."
+version = "1.0.0"
+id = "artifacts/market-intel-mcp"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 25780
+
+[services.development]
+run = "pnpm --filter @workspace/market-intel-mcp run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/market-intel-mcp", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/market-intel-mcp/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "25780"
+BASE_PATH = "/"

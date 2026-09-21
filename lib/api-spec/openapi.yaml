@@ -1,36 +1,279 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
-  version: 0.1.0
-  description: API specification
+  version: 1.0.0
+  description: Market Intel MCP API
 servers:
   - url: /api
-    description: Base API path
 tags:
-  - name: health
-    description: Health operations
+  - { name: health }
+  - { name: public }
+  - { name: intel }
+  - { name: admin }
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
-      summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/HealthStatus"
+          content: { application/json: { schema: { $ref: "#/components/schemas/HealthStatus" } } }
+  /v1/public/verify:
+    get:
+      operationId: verifyCurrentPrice
+      tags: [public]
+      parameters:
+        - { name: url, in: query, required: true, schema: { type: string, format: uri } }
+      responses:
+        "200":
+          description: Verification result
+          content: { application/json: { schema: { $ref: "#/components/schemas/VerificationResult" } } }
+  /v1/public/search-products:
+    get:
+      operationId: searchProducts
+      tags: [public]
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string, minLength: 2 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+      responses:
+        "200":
+          description: Product offers
+          content: { application/json: { schema: { $ref: "#/components/schemas/SearchResponse" } } }
+  /v1/public/search-auctions:
+    get:
+      operationId: searchAuctions
+      tags: [public]
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string, minLength: 2 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+      responses:
+        "200":
+          description: Auction offers
+          content: { application/json: { schema: { $ref: "#/components/schemas/SearchResponse" } } }
+  /v1/public/source-health:
+    get:
+      operationId: getSourceHealth
+      tags: [public]
+      responses:
+        "200":
+          description: Provider health
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/SourceHealth" } } } }
+  /v1/source-coverage:
+    get:
+      operationId: getSourceCoverage
+      tags: [intel]
+      responses:
+        "200":
+          description: Measured trusted-source coverage
+          content: { application/json: { schema: { $ref: "#/components/schemas/CoverageReport" } } }
+  /v1/price-history:
+    get:
+      operationId: getPriceHistory
+      tags: [intel]
+      parameters:
+        - { name: identity, in: query, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Price history
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Observation" } } } }
+  /v1/sold-comps:
+    get:
+      operationId: getSoldComps
+      tags: [intel]
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Normalized sold comps
+          content: { application/json: { schema: { $ref: "#/components/schemas/SoldCompsResult" } } }
+  /v1/compare:
+    get:
+      operationId: compareOffers
+      tags: [intel]
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Comparison
+          content: { application/json: { schema: { $ref: "#/components/schemas/SearchResponse" } } }
+  /v1/admin/summary:
+    get:
+      operationId: getAdminSummary
+      tags: [admin]
+      responses:
+        "200":
+          description: Dashboard summary
+          content: { application/json: { schema: { $ref: "#/components/schemas/AdminSummary" } } }
+  /v1/admin/conflicts:
+    get:
+      operationId: listConflicts
+      tags: [admin]
+      responses:
+        "200":
+          description: Recent conflicts
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/VerificationResult" } } } }
+  /v1/admin/observations:
+    get:
+      operationId: listObservations
+      tags: [admin]
+      responses:
+        "200":
+          description: Recent observations
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Observation" } } } }
+  /v1/setup-bundle:
+    get:
+      operationId: getSetupBundle
+      tags: [intel]
+      responses:
+        "200":
+          description: ChatGPT MCP and schedule setup bundle
+          content: { application/json: { schema: { $ref: "#/components/schemas/SetupBundle" } } }
 components:
   schemas:
     HealthStatus:
       type: object
+      required: [status, service, time]
       properties:
-        status:
-          type: string
-      required:
-        - status
-
+        status: { type: string }
+        service: { type: string }
+        time: { type: string, format: date-time }
+    ProductIdentity:
+      type: object
+      properties:
+        jan: { type: ["string", "null"] }
+        gtin: { type: ["string", "null"] }
+        asin: { type: ["string", "null"] }
+        mpn: { type: ["string", "null"] }
+        model: { type: ["string", "null"] }
+        capacity: { type: ["string", "null"] }
+        color: { type: ["string", "null"] }
+        region: { type: ["string", "null"] }
+        version: { type: ["string", "null"] }
+        year: { type: ["string", "null"] }
+        condition: { type: ["string", "null"] }
+        grade: { type: ["string", "null"] }
+        cert_company: { type: ["string", "null"] }
+        cert_number: { type: ["string", "null"] }
+        accessories: { type: array, items: { type: string } }
+    Observation:
+      type: object
+      required: [id, title, value, currency, source, source_tier, fetched_at, freshness_seconds, confidence, url, evidence_hash, identity]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        value: { type: number }
+        currency: { type: string }
+        source: { type: string }
+        source_tier: { type: integer }
+        fetched_at: { type: string, format: date-time }
+        freshness_seconds: { type: integer }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        url: { type: string, format: uri }
+        evidence_hash: { type: string }
+        remaining_seconds: { type: ["integer", "null"] }
+        actionable: { type: boolean }
+        identity: { $ref: "#/components/schemas/ProductIdentity" }
+    VerificationResult:
+      type: object
+      required: [status, actionable, reason, observations, checked_at]
+      properties:
+        status: { type: string, enum: [VERIFIED_STRONG, VERIFIED_SINGLE, CONFLICT, STALE, UNVERIFIED] }
+        actionable: { type: boolean }
+        reason: { type: string }
+        observations: { type: array, items: { $ref: "#/components/schemas/Observation" } }
+        checked_at: { type: string, format: date-time }
+    SearchResponse:
+      type: object
+      required: [query, results, providers_queried, generated_at]
+      properties:
+        query: { type: string }
+        results: { type: array, items: { $ref: "#/components/schemas/VerificationResult" } }
+        providers_queried: { type: array, items: { type: string } }
+        generated_at: { type: string, format: date-time }
+    SourceHealth:
+      type: object
+      required: [id, label, tier, configured, available, success_rate, price_success_rate, identity_success_rate, latency_ms, consecutive_failures]
+      properties:
+        id: { type: string }
+        label: { type: string }
+        tier: { type: integer }
+        configured: { type: boolean }
+        available: { type: boolean }
+        success_rate: { type: number }
+        price_success_rate: { type: number }
+        identity_success_rate: { type: number }
+        last_success_at: { type: ["string", "null"] }
+        last_error: { type: ["string", "null"] }
+        latency_ms: { type: integer }
+        consecutive_failures: { type: integer }
+    CoverageSource:
+      type: object
+      required: [id, name, category, configured, searchable, live_price_capable, sold_comps_capable, health]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        category: { type: string }
+        configured: { type: boolean }
+        searchable: { type: boolean }
+        live_price_capable: { type: boolean }
+        sold_comps_capable: { type: boolean }
+        health: { type: string }
+    CoverageReport:
+      type: object
+      required: [registry_size, configured_count, searchable_count, live_price_count, sold_comps_count, measured_coverage_percent, sources]
+      properties:
+        registry_size: { type: integer }
+        configured_count: { type: integer }
+        searchable_count: { type: integer }
+        live_price_count: { type: integer }
+        sold_comps_count: { type: integer }
+        measured_coverage_percent: { type: number }
+        disclaimer: { type: string }
+        sources: { type: array, items: { $ref: "#/components/schemas/CoverageSource" } }
+    SoldComp:
+      type: object
+      required: [title, sold_price, currency, sold_at, source, normalized_price, condition, url]
+      properties:
+        title: { type: string }
+        sold_price: { type: number }
+        currency: { type: string }
+        sold_at: { type: string, format: date-time }
+        source: { type: string }
+        normalized_price: { type: number }
+        condition: { type: string }
+        url: { type: string, format: uri }
+    SoldCompsResult:
+      type: object
+      required: [query, comps, conservative_value, liquidity, confidence]
+      properties:
+        query: { type: string }
+        comps: { type: array, items: { $ref: "#/components/schemas/SoldComp" } }
+        conservative_value: { type: ["number", "null"] }
+        liquidity: { type: string }
+        confidence: { type: number }
+    AdminSummary:
+      type: object
+      required: [providers_total, providers_available, registry_coverage_percent, conflicts_24h, stale_24h, observations_24h]
+      properties:
+        providers_total: { type: integer }
+        providers_available: { type: integer }
+        registry_coverage_percent: { type: number }
+        conflicts_24h: { type: integer }
+        stale_24h: { type: integer }
+        observations_24h: { type: integer }
+    ScheduleItem:
+      type: object
+      required: [name, prompt, ical]
+      properties:
+        name: { type: string }
+        prompt: { type: string }
+        ical: { type: string }
+    SetupBundle:
+      type: object
+      required: [mcp_instructions, automation_prompt, schedules, reproduction_prompt]
+      properties:
+        mcp_instructions: { type: string }
+        automation_prompt: { type: string }
+        schedules: { type: array, maxItems: 15, items: { $ref: "#/components/schemas/ScheduleItem" } }
+        reproduction_prompt: { type: string }

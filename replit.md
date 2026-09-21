@@ -1,6 +1,6 @@
-# [Project name]
+# Market Intel MCP
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+日本語優先の価格比較・オークション監視サービス。証拠と鮮度に基づく検証結果をRESTとRemote MCPで提供します。
 
 ## Run & Operate
 
@@ -22,15 +22,21 @@ _Replace the heading above with the project's name, and this line with one sente
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `lib/api-spec/openapi.yaml` — REST契約
+- `artifacts/api-server/src/market/` — ルーティング、商品識別、証拠投票、鮮度ポリシー
+- `artifacts/api-server/src/routes/market.ts` — RESTとRemote MCP
+- `artifacts/market-intel-mcp/` — 日本語管理画面
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- 検索スニペットは発見用途のみ。現在価格の証拠にはしない。
+- アクション可能なのは鮮度条件を満たす VERIFIED_STRONG / VERIFIED_SINGLE のみ。
+- カバレッジはtrusted-source registryに対して測定し、インターネット全体の網羅率とは表現しない。
+- 未設定の任意プロバイダーはエラーにせず無効化する。
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+価格URL検証、商品・オークション検索、価格比較、落札相場、履歴、ソース健全性、カバレッジ、ChatGPT自動化セットアップ。
 
 ## User preferences
 
