@@ -10,6 +10,8 @@ export * from './adminSummary';
 export * from './compareOffersParams';
 export * from './coverageReport';
 export * from './coverageSource';
+export * from './discoveryResult';
+export * from './discoveryResultKind';
 export * from './getPriceHistoryParams';
 export * from './getSoldCompsParams';
 export * from './healthStatus';

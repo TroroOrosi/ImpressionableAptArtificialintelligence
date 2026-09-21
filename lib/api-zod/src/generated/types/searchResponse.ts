@@ -5,6 +5,7 @@
  * Market Intel MCP API
  * OpenAPI spec version: 1.0.0
  */
+import type { DiscoveryResult } from './discoveryResult';
 import type { VerificationResult } from './verificationResult';
 
 export interface SearchResponse {
@@ -12,4 +13,6 @@ export interface SearchResponse {
   results: VerificationResult[];
   providers_queried: string[];
   generated_at: Date;
+  /** Search references that are for discovery only and never count as price evidence. */
+  discovery?: DiscoveryResult[];
 }

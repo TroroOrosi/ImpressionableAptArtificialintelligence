@@ -2,25 +2,21 @@ import { createHash } from "node:crypto";
 
 export type VerificationStatus = "VERIFIED_STRONG" | "VERIFIED_SINGLE" | "CONFLICT" | "STALE" | "UNVERIFIED";
 export type Identity = Record<string, string | string[] | null | undefined>;
+
+export type VerificationResult = {
+  status: VerificationStatus;
+  actionable: boolean;
+  reason: string;
+  observations: Observation[];
+  checked_at: string;
+};
 export type Evidence = {
   value: number; currency: string; fetched_at: string; freshness_seconds: number;
   remaining_seconds?: number | null; source?: string; source_tier?: number;
   evidence_hash?: string; url?: string; [key: string]: unknown;
 };
 
-const configured = (env?: string) => !env || Boolean(process.env[env]);
-export const providerRegistry = [
-  { id: "yahoo-shopping", label: "Yahoo!ショッピング API", tier: 1, kind: "official", env: "YAHOO_CLIENT_ID" },
-  { id: "rakuten", label: "楽天市場 API", tier: 1, kind: "official", env: "RAKUTEN_APP_ID" },
-  { id: "ebay", label: "eBay Browse API", tier: 1, kind: "official", env: "EBAY_CLIENT_ID" },
-  { id: "amazon", label: "Amazon Creators API", tier: 1, kind: "official", env: "AMAZON_CREATORS_KEY" },
-  { id: "keepa", label: "Keepa", tier: 2, kind: "specialist", env: "KEEPA_API_KEY" },
-  { id: "serpapi", label: "SerpApi Google Shopping", tier: 3, kind: "discovery", env: "SERPAPI_KEY" },
-  { id: "apify", label: "Apify Marketplace Actors", tier: 4, kind: "marketplace", env: "APIFY_TOKEN" },
-  { id: "brightdata", label: "Bright Data", tier: 5, kind: "fallback", env: "BRIGHT_DATA_TOKEN" },
-  { id: "jsonld", label: "JSON-LD / Schema.org", tier: 6, kind: "generic" },
-  { id: "playwright", label: "Playwright (最終手段)", tier: 7, kind: "browser", env: "ENABLE_PLAYWRIGHT" },
-].map((p) => ({ ...p, configured: configured(p.env) }));
+export type MarketMode = "products" | "auctions";
 
 const fields = ["jan", "gtin", "asin", "mpn", "model", "capacity", "color", "region", "version", "year", "condition", "grade", "cert_company", "cert_number"];
 export function compareIdentity(a: Identity, b: Identity) {
@@ -71,3 +67,343 @@ export function computeCoverage(sources: Array<{ configured: boolean; searchable
     disclaimer: "インターネット全体ではなく、登録済み trusted-source registry に対する実測カバレッジです。",
   };
 }
+
+export type Observation = Evidence & {
+  id: string;
+  title: string;
+  source: string;
+  source_tier: number;
+  confidence: number;
+  url: string;
+  evidence_hash: string;
+  identity: Identity;
+  actionable: boolean;
+};
+
+export type ProviderSearchResult = {
+  observations: Observation[];
+  discoveries: DiscoveryResult[];
+};
+
+function normalizeIdentity(identity: Identity | undefined): Identity {
+  if (!identity) return { accessories: [] };
+  const normalized: Identity = {};
+  for (const [key, value] of Object.entries(identity)) {
+    if (Array.isArray(value)) {
+      const values = value.map(normalizeString).filter((item): item is string => Boolean(item));
+      if (values.length) normalized[key] = values;
+    } else {
+      const item = normalizeString(value);
+      if (item) normalized[key] = item;
+    }
+  }
+  if (!normalized.accessories) normalized.accessories = [];
+  return normalized;
+}
+
+const hasEnv = (name: string) => Boolean(process.env[name]?.trim());
+
+export function normalizeDiscovery(raw: {
+  title: unknown;
+  url: unknown;
+  source: string;
+  snippet?: unknown;
+}): DiscoveryResult | null {
+  const title = normalizeString(raw.title);
+  const url = normalizeUrl(raw.url);
+  if (!title || !url) return null;
+  const snippet = normalizeString(raw.snippet);
+  return {
+    title,
+    url,
+    source: raw.source,
+    kind: "DISCOVERY_ONLY",
+    ...(snippet ? { snippet: snippet.slice(0, 500) } : {}),
+  };
+}
+
+function normalizeTimestamp(value: unknown, fallback: string) {
+  const raw = normalizeString(value);
+  if (!raw) return fallback;
+  const timestamp = new Date(raw);
+  return Number.isNaN(timestamp.getTime()) ? fallback : timestamp.toISOString();
+}
+
+const withConfigured = (provider: Omit<ProviderDefinition, "configured">): ProviderDefinition =>
+  Object.defineProperty({ ...provider }, "configured", {
+    enumerable: true,
+    get: () => isProviderConfigured(provider),
+  }) as ProviderDefinition;
+
+export function parsePrice(value: unknown): number | null {
+  if (typeof value === "number") return Number.isFinite(value) && value > 0 ? value : null;
+  if (typeof value !== "string") return null;
+
+  const normalized = value.trim().replace(/[^\d.,+-]/g, "");
+  if (!normalized) return null;
+
+  const lastComma = normalized.lastIndexOf(",");
+  const lastDot = normalized.lastIndexOf(".");
+  let numeric = normalized;
+  if (lastComma > lastDot) {
+    numeric = normalized.replace(/\./g, "").replace(",", ".");
+  } else {
+    numeric = normalized.replace(/,/g, "");
+  }
+
+  const parsed = Number(numeric);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+export function recordProviderHealth(
+  providerId: string,
+  outcome: { ok: boolean; latencyMs: number; observations: number; error?: string },
+) {
+  const current = providerHealth.get(providerId) || emptyProviderHealth();
+  current.attempts += 1;
+  current.lastLatencyMs = Math.max(0, Math.round(outcome.latencyMs));
+  current.observations += Math.max(0, outcome.observations);
+  if (outcome.ok) {
+    current.successes += 1;
+    current.consecutiveFailures = 0;
+    current.lastSuccessAt = new Date().toISOString();
+    current.lastError = null;
+  } else {
+    current.failures += 1;
+    current.consecutiveFailures += 1;
+    current.lastError = outcome.error || "provider_request_failed";
+  }
+  providerHealth.set(providerId, current);
+}
+
+export type DiscoveryResult = {
+  title: string;
+  url: string;
+  source: string;
+  kind: "DISCOVERY_ONLY";
+  snippet?: string;
+};
+
+export function buildSearchResponse(
+  query: string,
+  observations: Observation[],
+  discoveries: DiscoveryResult[],
+  providersQueried: string[],
+): SearchResponse {
+  const grouped = new Map<string, Observation[]>();
+  for (const observation of observations) {
+    const key = observationGroupKey(observation);
+    const group = grouped.get(key) || [];
+    group.push(observation);
+    grouped.set(key, group);
+  }
+
+  const results = [...grouped.values()]
+    .sort((a, b) => {
+      const tier = (a[0]?.source_tier || Number.MAX_SAFE_INTEGER) - (b[0]?.source_tier || Number.MAX_SAFE_INTEGER);
+      return tier || (a[0]?.title || "").localeCompare(b[0]?.title || "");
+    })
+    .map((items) => {
+      const verification = verifyEvidence(items);
+      return {
+        ...verification,
+        observations: items,
+        checked_at: new Date().toISOString(),
+      };
+    });
+
+  const uniqueDiscoveries = new Map<string, DiscoveryResult>();
+  for (const discovery of discoveries) uniqueDiscoveries.set(`${discovery.source}:${discovery.url}`, discovery);
+
+  return {
+    query,
+    results,
+    providers_queried: providersQueried,
+    generated_at: new Date().toISOString(),
+    ...(uniqueDiscoveries.size ? { discovery: [...uniqueDiscoveries.values()] } : {}),
+  };
+}
+
+export type SearchResponse = {
+  query: string;
+  results: VerificationResult[];
+  providers_queried: string[];
+  generated_at: string;
+  discovery?: DiscoveryResult[];
+};
+
+function observationGroupKey(observation: Observation) {
+  for (const key of ["gtin", "jan", "asin", "mpn", "model"]) {
+    const value = observation.identity[key];
+    if (typeof value === "string" && value) return `identifier:${value.toLowerCase()}`;
+  }
+  return `title:${observation.title.trim().toLowerCase().replace(/\s+/g, " ")}`;
+}
+
+export function isProviderConfigured(provider: Pick<ProviderDefinition, "env" | "requiredEnv" | "anyEnv">) {
+  const required = provider.requiredEnv ?? (provider.env ? [provider.env] : []);
+  if (!required.every(hasEnv)) return false;
+  return !provider.anyEnv || provider.anyEnv.some(hasEnv);
+}
+
+export type ProviderDefinition = {
+  id: string;
+  label: string;
+  tier: number;
+  kind: ProviderKind;
+  env?: string;
+  requiredEnv?: readonly string[];
+  anyEnv?: readonly string[];
+  readonly configured: boolean;
+};
+
+const providerHealth = new Map<string, ProviderHealth>();
+
+/**
+ * The registry is intentionally metadata-only. Provider-specific adapters live in
+ * providers.ts, and a provider is considered configured at request time so that
+ * Replit Secrets added while the process is running take effect without exposing
+ * the secret values.
+ */
+const providerDefinitions: Array<Omit<ProviderDefinition, "configured">> = [
+  { id: "yahoo-shopping", label: "Yahoo!ショッピング API", tier: 1, kind: "official", env: "YAHOO_CLIENT_ID" },
+  { id: "rakuten", label: "楽天市場 API", tier: 1, kind: "official", env: "RAKUTEN_APP_ID" },
+  {
+    id: "ebay",
+    label: "eBay Browse API",
+    tier: 1,
+    kind: "official",
+    env: "EBAY_CLIENT_ID",
+    requiredEnv: ["EBAY_CLIENT_ID"],
+    anyEnv: ["EBAY_CLIENT_SECRET", "EBAY_ACCESS_TOKEN"],
+  },
+  { id: "amazon", label: "Amazon Creators API", tier: 1, kind: "official", env: "AMAZON_CREATORS_KEY" },
+  { id: "keepa", label: "Keepa", tier: 2, kind: "specialist", env: "KEEPA_API_KEY" },
+  { id: "serpapi", label: "SerpApi Google Shopping", tier: 3, kind: "discovery", env: "SERPAPI_KEY" },
+  { id: "apify", label: "Apify Marketplace Actors", tier: 4, kind: "marketplace", env: "APIFY_TOKEN" },
+  { id: "brightdata", label: "Bright Data", tier: 5, kind: "fallback", env: "BRIGHT_DATA_TOKEN" },
+  { id: "jsonld", label: "JSON-LD / Schema.org", tier: 6, kind: "generic" },
+  { id: "playwright", label: "Playwright (最終手段)", tier: 7, kind: "browser", env: "ENABLE_PLAYWRIGHT" },
+];
+
+export const providerRegistry = providerDefinitions.map(withConfigured);
+
+export function normalizeObservation(raw: RawObservation): Observation | null {
+  const title = normalizeString(raw.title);
+  const value = parsePrice(raw.value);
+  const url = normalizeUrl(raw.url);
+  if (!title || value == null || !url) return null;
+
+  const fetchedAt = normalizeTimestamp(raw.fetchedAt, new Date().toISOString());
+  const fetchedMs = new Date(fetchedAt).getTime();
+  const freshnessSeconds = Math.max(0, Math.floor((Date.now() - fetchedMs) / 1000));
+  const remainingValue = typeof raw.remainingSeconds === "number"
+    ? raw.remainingSeconds
+    : typeof raw.remainingSeconds === "string"
+      ? Number(raw.remainingSeconds.trim())
+      : Number.NaN;
+  const remainingSeconds = Number.isFinite(remainingValue) && remainingValue >= 0
+    ? Math.round(remainingValue)
+    : null;
+  const currency = normalizeString(raw.currency)?.toUpperCase() || "JPY";
+  const identity = normalizeIdentity(raw.identity);
+  const itemId = normalizeString(raw.providerItemId);
+  const evidence_hash = evidenceHash([
+    raw.source,
+    itemId || url,
+    value,
+    currency,
+    fetchedAt,
+  ]);
+
+  return {
+    id: evidenceHash([raw.source, itemId || url, fetchedAt]),
+    title,
+    value,
+    currency,
+    source: raw.source,
+    source_tier: raw.sourceTier,
+    fetched_at: fetchedAt,
+    freshness_seconds: freshnessSeconds,
+    remaining_seconds: remainingSeconds,
+    confidence: clampConfidence(raw.confidence, defaultConfidence(raw.sourceTier)),
+    url,
+    evidence_hash,
+    actionable: true,
+    identity,
+  };
+}
+
+const emptyProviderHealth = (): ProviderHealth => ({
+  attempts: 0,
+  successes: 0,
+  failures: 0,
+  observations: 0,
+  lastSuccessAt: null,
+  lastError: null,
+  lastLatencyMs: 0,
+  consecutiveFailures: 0,
+});
+
+export type RawObservation = {
+  title: unknown;
+  value: unknown;
+  currency?: unknown;
+  url: unknown;
+  source: string;
+  sourceTier: number;
+  fetchedAt?: unknown;
+  remainingSeconds?: unknown;
+  confidence?: unknown;
+  identity?: Identity;
+  providerItemId?: unknown;
+};
+
+function clampConfidence(value: unknown, fallback: number) {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, Math.min(1, parsed)) : fallback;
+}
+
+function normalizeString(value: unknown) {
+  if (typeof value !== "string" && typeof value !== "number") return undefined;
+  const result = String(value).trim();
+  return result || undefined;
+}
+
+function normalizeUrl(value: unknown) {
+  const raw = normalizeString(value);
+  if (!raw) return undefined;
+  try {
+    const url = new URL(raw);
+    return url.protocol === "https:" || url.protocol === "http:" ? url.href : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export type ProviderKind = "official" | "specialist" | "discovery" | "marketplace" | "fallback" | "generic" | "browser";
+
+function defaultConfidence(sourceTier: number) {
+  if (sourceTier <= 1) return 0.94;
+  if (sourceTier === 2) return 0.88;
+  if (sourceTier === 3) return 0.62;
+  if (sourceTier === 4) return 0.7;
+  if (sourceTier === 5) return 0.55;
+  return 0.6;
+}
+
+export function getProviderHealth(providerId: string) {
+  const current = providerHealth.get(providerId) || emptyProviderHealth();
+  return { ...current };
+}
+
+type ProviderHealth = {
+  attempts: number;
+  successes: number;
+  failures: number;
+  observations: number;
+  lastSuccessAt: string | null;
+  lastError: string | null;
+  lastLatencyMs: number;
+  consecutiveFailures: number;
+};

@@ -122,7 +122,14 @@ export const SearchProductsResponse = zod.object({
   "checked_at": zod.coerce.date()
 })),
   "providers_queried": zod.array(zod.string()),
-  "generated_at": zod.coerce.date()
+  "generated_at": zod.coerce.date(),
+  "discovery": zod.array(zod.object({
+  "title": zod.string(),
+  "url": zod.string().url(),
+  "source": zod.string(),
+  "kind": zod.enum(['DISCOVERY_ONLY']),
+  "snippet": zod.string().optional()
+})).optional().describe('Search references that are for discovery only and never count as price evidence.')
 })
 
 
@@ -184,7 +191,14 @@ export const SearchAuctionsResponse = zod.object({
   "checked_at": zod.coerce.date()
 })),
   "providers_queried": zod.array(zod.string()),
-  "generated_at": zod.coerce.date()
+  "generated_at": zod.coerce.date(),
+  "discovery": zod.array(zod.object({
+  "title": zod.string(),
+  "url": zod.string().url(),
+  "source": zod.string(),
+  "kind": zod.enum(['DISCOVERY_ONLY']),
+  "snippet": zod.string().optional()
+})).optional().describe('Search references that are for discovery only and never count as price evidence.')
 })
 
 
@@ -342,7 +356,14 @@ export const CompareOffersResponse = zod.object({
   "checked_at": zod.coerce.date()
 })),
   "providers_queried": zod.array(zod.string()),
-  "generated_at": zod.coerce.date()
+  "generated_at": zod.coerce.date(),
+  "discovery": zod.array(zod.object({
+  "title": zod.string(),
+  "url": zod.string().url(),
+  "source": zod.string(),
+  "kind": zod.enum(['DISCOVERY_ONLY']),
+  "snippet": zod.string().optional()
+})).optional().describe('Search references that are for discovery only and never count as price evidence.')
 })
 
 

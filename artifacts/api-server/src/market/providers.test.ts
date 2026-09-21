@@ -1,0 +1,221 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { availableProviderIds, searchMarket } from "./providers";
+
+const providerEnv = [
+  "YAHOO_CLIENT_ID",
+  "RAKUTEN_APP_ID",
+  "RAKUTEN_ACCESS_KEY",
+  "EBAY_CLIENT_ID",
+  "EBAY_CLIENT_SECRET",
+  "EBAY_ACCESS_TOKEN",
+  "KEEPA_API_KEY",
+  "SERPAPI_KEY",
+  "APIFY_TOKEN",
+  "APIFY_ACTOR_ID",
+  "APIFY_STRUCTURED_ACTOR_ID",
+  "BRIGHT_DATA_TOKEN",
+  "BRIGHT_DATA_ZONE",
+];
+
+function saveProviderEnv() {
+  return new Map(providerEnv.map((name) => [name, process.env[name]]));
+}
+
+function clearProviderEnv() {
+  for (const name of providerEnv) delete process.env[name];
+}
+
+function restoreProviderEnv(saved: Map<string, string | undefined>) {
+  clearProviderEnv();
+  for (const [name, value] of saved) {
+    if (value !== undefined) process.env[name] = value;
+  }
+}
+
+function jsonResponse(payload: unknown, status = 200) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+test("official adapters normalize product and auction observations in priority order", { concurrency: false }, async () => {
+  const savedEnv = saveProviderEnv();
+  const originalFetch = globalThis.fetch;
+  try {
+    clearProviderEnv();
+    process.env.YAHOO_CLIENT_ID = "test-yahoo";
+    process.env.RAKUTEN_APP_ID = "test-rakuten";
+    process.env.EBAY_CLIENT_ID = "test-ebay";
+    process.env.EBAY_ACCESS_TOKEN = "test-ebay-token";
+
+    const calls: string[] = [];
+    globalThis.fetch = (async (input: string | URL) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.includes("shopping.yahooapis.jp")) {
+        return jsonResponse({
+          hits: [{
+            name: "Camera body",
+            price: 100000,
+            url: "https://store.example/yahoo-camera",
+            code: { jan: "4900000000001" },
+          }],
+        });
+      }
+      if (url.includes("app.rakuten.co.jp")) {
+        return jsonResponse({
+          Items: [{
+            Item: {
+              itemName: "Camera body",
+              itemPrice: 100000,
+              itemUrl: "https://store.example/rakuten-camera",
+              jan: "4900000000001",
+            },
+          }],
+        });
+      }
+      if (url.includes("/buy/browse/v1/item_summary/search")) {
+        return jsonResponse({
+          itemSummaries: [{
+            title: "Camera body",
+            price: { value: "100000", currency: "JPY" },
+            itemWebUrl: "https://www.ebay.example/camera",
+            itemId: "ebay-camera",
+            gtin: "4900000000001",
+            itemEndDate: new Date(Date.now() + 300_000).toISOString(),
+          }],
+        });
+      }
+      throw new Error(`Unexpected test URL: ${url}`);
+    }) as typeof fetch;
+
+    const products = await searchMarket("camera", "products", 10);
+    assert.deepEqual(products.providers_queried, ["yahoo-shopping", "rakuten", "ebay"]);
+    assert.equal(products.results.length, 1);
+    assert.equal(products.results[0]?.status, "VERIFIED_STRONG");
+    assert.equal(products.results[0]?.observations.length, 3);
+    assert.deepEqual(
+      products.results[0]?.observations.map((observation) => observation.source),
+      ["yahoo-shopping", "rakuten", "ebay"],
+    );
+
+    const auctions = await searchMarket("camera", "auctions", 10);
+    assert.deepEqual(auctions.providers_queried, ["ebay"]);
+    assert.equal(auctions.results[0]?.observations[0]?.source, "ebay");
+    assert.ok((auctions.results[0]?.observations[0]?.remaining_seconds || 0) > 0);
+    assert.ok(calls.some((url) => url.includes("filter=buyingOptions%3A%7BAUCTION%7D")));
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreProviderEnv(savedEnv);
+  }
+});
+
+test("discovery providers never turn shopping snippets into price evidence", { concurrency: false }, async () => {
+  const savedEnv = saveProviderEnv();
+  const originalFetch = globalThis.fetch;
+  try {
+    clearProviderEnv();
+    process.env.SERPAPI_KEY = "test-serpapi";
+    process.env.BRIGHT_DATA_TOKEN = "test-brightdata";
+
+    globalThis.fetch = (async (input: string | URL) => {
+      const url = String(input);
+      if (url.includes("serpapi.com")) {
+        return jsonResponse({
+          shopping_results: [{
+            title: "Snippet camera",
+            price: "¥50,000",
+            link: "https://merchant.example/serp-camera",
+            snippet: "A shopping search snippet",
+          }],
+        });
+      }
+      if (url.includes("api.brightdata.com/request")) {
+        return jsonResponse({
+          shopping_results: [{
+            title: "Bright snippet camera",
+            price: 50000,
+            link: "https://merchant.example/bright-camera",
+            snippet: "Another shopping snippet",
+          }],
+        });
+      }
+      throw new Error(`Unexpected test URL: ${url}`);
+    }) as typeof fetch;
+
+    const response = await searchMarket("camera", "products", 10);
+    assert.deepEqual(response.providers_queried, ["serpapi", "brightdata"]);
+    assert.deepEqual(response.results, []);
+    assert.equal(response.discovery?.length, 2);
+    assert.ok(response.discovery?.every((item) => item.kind === "DISCOVERY_ONLY"));
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreProviderEnv(savedEnv);
+  }
+});
+
+test("optional adapters activate only when their secrets are present", { concurrency: false }, async () => {
+  const savedEnv = saveProviderEnv();
+  const originalFetch = globalThis.fetch;
+  try {
+    clearProviderEnv();
+    assert.deepEqual(availableProviderIds("products"), []);
+
+    process.env.KEEPA_API_KEY = "test-keepa";
+    process.env.APIFY_TOKEN = "test-apify";
+    globalThis.fetch = (async (input: string | URL) => {
+      const url = String(input);
+      if (url.includes("api.keepa.com/search")) {
+        return jsonResponse({
+          products: [{
+            asin: "B000TEST01",
+            title: "Keepa camera",
+            stats: { current: [-1, 12345] },
+          }],
+        });
+      }
+      if (url.includes("api.apify.com")) {
+        if (url.includes("test~structured")) {
+          return jsonResponse([{
+            providerOwnedItemId: "structured-camera",
+            providerOwnedTitle: "Structured Apify camera",
+            providerOwnedPrice: 88000,
+            providerOwnedCurrency: "JPY",
+            providerOwnedUrl: "https://merchant.example/structured-camera",
+          }]);
+        }
+        return jsonResponse([{
+          id: "apify-camera",
+          title: "Apify camera",
+          price: "¥99,000",
+          url: "https://merchant.example/apify-camera",
+        }]);
+      }
+      throw new Error(`Unexpected test URL: ${url}`);
+    }) as typeof fetch;
+
+    assert.deepEqual(availableProviderIds("products"), ["keepa", "apify"]);
+    const response = await searchMarket("camera", "products", 10);
+    assert.deepEqual(response.providers_queried, ["keepa", "apify"]);
+    assert.deepEqual(
+      response.results.flatMap((result) => result.observations.map((observation) => observation.source)),
+      ["keepa"],
+    );
+    assert.equal(response.discovery?.length, 1);
+    assert.equal(response.discovery?.[0]?.source, "apify");
+    assert.equal(response.discovery?.[0]?.kind, "DISCOVERY_ONLY");
+
+    delete process.env.KEEPA_API_KEY;
+    process.env.APIFY_ACTOR_ID = "test~structured";
+    process.env.APIFY_STRUCTURED_ACTOR_ID = "test~structured";
+    const structuredResponse = await searchMarket("camera", "products", 10);
+    assert.deepEqual(structuredResponse.providers_queried, ["apify"]);
+    assert.equal(structuredResponse.results[0]?.observations[0]?.source, "apify");
+    assert.equal(structuredResponse.results[0]?.observations[0]?.value, 88000);
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreProviderEnv(savedEnv);
+  }
+});

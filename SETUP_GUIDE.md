@@ -6,11 +6,14 @@
 
 - `YAHOO_CLIENT_ID`
 - `RAKUTEN_APP_ID`
+- `RAKUTEN_ACCESS_KEY`（新しい楽天Web Service APIを使う場合）
 - `EBAY_CLIENT_ID`
+- `EBAY_CLIENT_SECRET`（または事前発行済みの `EBAY_ACCESS_TOKEN`）
 - `AMAZON_CREATORS_KEY`
 - `KEEPA_API_KEY`
 - `SERPAPI_KEY`
 - `APIFY_TOKEN`
+- `APIFY_STRUCTURED_ACTOR_ID`（provider-owned structured price contractを実装したActorだけ。未設定のApify検索結果は discovery-only）
 - `BRIGHT_DATA_TOKEN`
 - `ENABLE_PLAYWRIGHT`（最終手段。規約上許可される対象だけ）
 - `ADMIN_API_TOKEN`（trusted-domain allowlistを管理者が明示的に拡張する場合）

@@ -191,6 +191,19 @@ components:
         results: { type: array, items: { $ref: "#/components/schemas/VerificationResult" } }
         providers_queried: { type: array, items: { type: string } }
         generated_at: { type: string, format: date-time }
+        discovery:
+          type: array
+          description: Search references that are for discovery only and never count as price evidence.
+          items: { $ref: "#/components/schemas/DiscoveryResult" }
+    DiscoveryResult:
+      type: object
+      required: [title, url, source, kind]
+      properties:
+        title: { type: string }
+        url: { type: string, format: uri }
+        source: { type: string }
+        kind: { type: string, enum: [DISCOVERY_ONLY] }
+        snippet: { type: string }
     SourceHealth:
       type: object
       required: [id, label, tier, configured, available, success_rate, price_success_rate, identity_success_rate, latency_ms, consecutive_failures]

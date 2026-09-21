@@ -1,0 +1,2 @@
+- [Marketplace evidence boundary](provider-adapters.md) — only structured provider-owned prices become observations; search snippets remain discovery-only.
+- [Artifact build environment](build-environment.md) — manual monorepo builds need workflow-style PORT and BASE_PATH values.

@@ -84,11 +84,28 @@ export interface VerificationResult {
   checked_at: string;
 }
 
+export type DiscoveryResultKind = typeof DiscoveryResultKind[keyof typeof DiscoveryResultKind];
+
+
+export const DiscoveryResultKind = {
+  DISCOVERY_ONLY: 'DISCOVERY_ONLY',
+} as const;
+
+export interface DiscoveryResult {
+  title: string;
+  url: string;
+  source: string;
+  kind: DiscoveryResultKind;
+  snippet?: string;
+}
+
 export interface SearchResponse {
   query: string;
   results: VerificationResult[];
   providers_queried: string[];
   generated_at: string;
+  /** Search references that are for discovery only and never count as price evidence. */
+  discovery?: DiscoveryResult[];
 }
 
 export interface SourceHealth {
