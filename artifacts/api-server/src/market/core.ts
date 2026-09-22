@@ -1,4 +1,8 @@
 import { createHash } from "node:crypto";
+import {
+  loadStoredProviderHealth,
+  persistProviderHealth,
+} from "./storage";
 
 export type VerificationStatus = "VERIFIED_STRONG" | "VERIFIED_SINGLE" | "CONFLICT" | "STALE" | "UNVERIFIED";
 export type Identity = Record<string, string | string[] | null | undefined>;
@@ -9,6 +13,12 @@ export type VerificationResult = {
   reason: string;
   observations: Observation[];
   checked_at: string;
+};
+export type ProviderHealthOutcome = {
+  ok: boolean;
+  latencyMs: number;
+  observations: number;
+  error?: string;
 };
 export type Evidence = {
   value: number; currency: string; fetched_at: string; freshness_seconds: number;
@@ -78,6 +88,25 @@ export type Observation = Evidence & {
   evidence_hash: string;
   identity: Identity;
   actionable: boolean;
+};
+
+export type SoldCompRecord = {
+  title: string;
+  sold_price: number;
+  currency: string;
+  sold_at: string;
+  source: string;
+  normalized_price: number;
+  condition: string;
+  url: string;
+};
+
+export type SoldCompsResult = {
+  query: string;
+  comps: SoldCompRecord[];
+  conservative_value: number | null;
+  liquidity: "insufficient_data" | "low" | "medium" | "high";
+  confidence: number;
 };
 
 export type ProviderSearchResult = {
@@ -155,10 +184,11 @@ export function parsePrice(value: unknown): number | null {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
-export function recordProviderHealth(
+export async function recordProviderHealth(
   providerId: string,
-  outcome: { ok: boolean; latencyMs: number; observations: number; error?: string },
+  outcome: ProviderHealthOutcome,
 ) {
+  await ensureProviderHealthLoaded();
   const current = providerHealth.get(providerId) || emptyProviderHealth();
   current.attempts += 1;
   current.lastLatencyMs = Math.max(0, Math.round(outcome.latencyMs));
@@ -174,6 +204,7 @@ export function recordProviderHealth(
     current.lastError = outcome.error || "provider_request_failed";
   }
   providerHealth.set(providerId, current);
+  await persistProviderHealth(providerId, outcome);
 }
 
 export type DiscoveryResult = {
@@ -231,6 +262,58 @@ export type SearchResponse = {
   generated_at: string;
   discovery?: DiscoveryResult[];
 };
+
+function quantile(values: number[], percentile: number) {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const position = (sorted.length - 1) * percentile;
+  const lower = Math.floor(position);
+  const upper = Math.ceil(position);
+  if (lower === upper) return sorted[lower] ?? null;
+  const lowerValue = sorted[lower];
+  const upperValue = sorted[upper];
+  if (lowerValue == null || upperValue == null) return null;
+  return lowerValue + (upperValue - lowerValue) * (position - lower);
+}
+
+function removePriceOutliers(comps: SoldCompRecord[]) {
+  const valid = comps.filter((comp) => Number.isFinite(comp.normalized_price) && comp.normalized_price > 0);
+  if (valid.length < 3) return valid;
+
+  const values = valid.map((comp) => comp.normalized_price);
+  const q1 = quantile(values, 0.25);
+  const q3 = quantile(values, 0.75);
+  const median = quantile(values, 0.5);
+  if (q1 == null || q3 == null || median == null) return valid;
+
+  const iqr = q3 - q1;
+  const lowerFence = Math.max(q1 - 1.5 * iqr, median * 0.4);
+  const upperFence = Math.min(q3 + 1.5 * iqr, median * 2.5);
+  return valid.filter((comp) => comp.normalized_price >= lowerFence && comp.normalized_price <= upperFence);
+}
+
+export function buildSoldCompsResponse(query: string, comps: SoldCompRecord[]): SoldCompsResult {
+  const usable = removePriceOutliers(comps);
+  const conservative = quantile(usable.map((comp) => comp.normalized_price), 0.25);
+  const sourceCount = new Set(usable.map((comp) => comp.source.toLowerCase())).size;
+  const confidence = usable.length
+    ? Math.round(Math.min(1, usable.length / 5) * (0.65 + 0.35 * Math.min(1, sourceCount / 3)) * 100) / 100
+    : 0;
+
+  return {
+    query,
+    comps,
+    conservative_value: conservative == null ? null : Math.round(conservative * 100) / 100,
+    liquidity: usable.length === 0
+      ? "insufficient_data"
+      : usable.length === 1
+        ? "low"
+        : usable.length < 5
+          ? "medium"
+          : "high",
+    confidence,
+  };
+}
 
 function observationGroupKey(observation: Observation) {
   for (const key of ["gtin", "jan", "asin", "mpn", "model"]) {
@@ -395,6 +478,17 @@ function defaultConfidence(sourceTier: number) {
 export function getProviderHealth(providerId: string) {
   const current = providerHealth.get(providerId) || emptyProviderHealth();
   return { ...current };
+}
+
+let providerHealthHydration: Promise<void> | undefined;
+
+export async function ensureProviderHealthLoaded() {
+  providerHealthHydration ??= loadStoredProviderHealth().then((stored) => {
+    for (const [providerId, metrics] of stored) {
+      providerHealth.set(providerId, metrics);
+    }
+  });
+  await providerHealthHydration;
 }
 
 type ProviderHealth = {

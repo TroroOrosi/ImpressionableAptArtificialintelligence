@@ -4,6 +4,7 @@ import {
   auctionFreshnessLimit,
   compareIdentity,
   computeCoverage,
+  buildSoldCompsResponse,
   isActionable,
   providerRegistry,
   verifyEvidence,
@@ -57,6 +58,45 @@ test("coverage is measured over the registry", () => {
   const report = computeCoverage([{ configured: true, searchable: true, live_price_capable: true, sold_comps_capable: false }]);
   assert.equal(report.measured_coverage_percent, 100);
   assert.match(report.disclaimer, /registry/i);
+});
+
+test("sold comps normalize conservative value around fees and reject outliers", () => {
+  const response = buildSoldCompsResponse("camera", [
+    {
+      title: "Used camera A",
+      sold_price: 1000,
+      currency: "JPY",
+      sold_at: "2026-09-19T10:00:00.000Z",
+      source: "market-a",
+      normalized_price: 800,
+      condition: "good",
+      url: "https://example.com/a",
+    },
+    {
+      title: "Used camera B",
+      sold_price: 1200,
+      currency: "JPY",
+      sold_at: "2026-09-18T10:00:00.000Z",
+      source: "market-b",
+      normalized_price: 1100,
+      condition: "good",
+      url: "https://example.com/b",
+    },
+    {
+      title: "Badly reported outlier",
+      sold_price: 10000,
+      currency: "JPY",
+      sold_at: "2026-09-17T10:00:00.000Z",
+      source: "market-c",
+      normalized_price: 10000,
+      condition: "new",
+      url: "https://example.com/c",
+    },
+  ]);
+
+  assert.equal(response.conservative_value, 875);
+  assert.equal(response.comps.length, 3);
+  assert.equal(response.liquidity, "medium");
 });
 
 test("health degrades after consecutive failures", () => {

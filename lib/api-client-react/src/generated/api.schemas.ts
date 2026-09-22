@@ -158,6 +158,48 @@ export interface SoldComp {
   url: string;
 }
 
+export type SoldCompInputIdentity = { [key: string]: unknown };
+
+export type SoldCompInputFees = number | string | { [key: string]: unknown };
+
+export type SoldCompInputFee = number | string | { [key: string]: unknown };
+
+export type SoldCompInputShipping = number | string | { [key: string]: unknown };
+
+export interface SoldCompInput {
+  id?: string;
+  query?: string;
+  title: string;
+  soldPrice: number | string;
+  currency: string;
+  soldAt: string;
+  source: string;
+  condition?: string;
+  url: string;
+  identity?: SoldCompInputIdentity;
+  providerItemId?: string;
+  evidenceHash?: string;
+  fees?: SoldCompInputFees;
+  fee?: SoldCompInputFee;
+  feeAmount?: number | string;
+  feeRate?: number | string;
+  feePercent?: number | string;
+  shipping?: SoldCompInputShipping;
+  shippingAmount?: number | string;
+}
+
+export interface SoldCompIngestRequest {
+  /** @maxItems 250 */
+  comps: SoldCompInput[];
+}
+
+export interface SoldCompIngestResult {
+  /** @minimum 0 */
+  accepted: number;
+  /** @minimum 0 */
+  skipped: number;
+}
+
 export interface SoldCompsResult {
   query: string;
   comps: SoldComp[];

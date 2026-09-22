@@ -463,6 +463,52 @@ export const ListObservationsResponseItem = zod.object({
 export const ListObservationsResponse = zod.array(ListObservationsResponseItem)
 
 
+export const ingestSoldCompsBodyCompsMax = 250;
+
+
+
+export const IngestSoldCompsBody = zod.object({
+  "comps": zod.array(zod.object({
+  "id": zod.string().optional(),
+  "query": zod.string().optional(),
+  "title": zod.string(),
+  "soldPrice": zod.union([zod.number(),zod.string()]),
+  "currency": zod.string(),
+  "soldAt": zod.coerce.date(),
+  "source": zod.string(),
+  "condition": zod.string().optional(),
+  "url": zod.string().url(),
+  "identity": zod.record(zod.string(), zod.unknown()).optional(),
+  "providerItemId": zod.string().optional(),
+  "evidenceHash": zod.string().optional(),
+  "fees": zod.union([zod.number(),zod.string(),zod.object({
+
+}).passthrough()]).optional(),
+  "fee": zod.union([zod.number(),zod.string(),zod.object({
+
+}).passthrough()]).optional(),
+  "feeAmount": zod.union([zod.number(),zod.string()]).optional(),
+  "feeRate": zod.union([zod.number(),zod.string()]).optional(),
+  "feePercent": zod.union([zod.number(),zod.string()]).optional(),
+  "shipping": zod.union([zod.number(),zod.string(),zod.object({
+
+}).passthrough()]).optional(),
+  "shippingAmount": zod.union([zod.number(),zod.string()]).optional()
+})).max(ingestSoldCompsBodyCompsMax)
+})
+
+export const ingestSoldCompsResponseAcceptedMin = 0;
+
+export const ingestSoldCompsResponseSkippedMin = 0;
+
+
+
+export const IngestSoldCompsResponse = zod.object({
+  "accepted": zod.number().int().min(ingestSoldCompsResponseAcceptedMin),
+  "skipped": zod.number().int().min(ingestSoldCompsResponseSkippedMin)
+})
+
+
 export const getSetupBundleResponseSchedulesMax = 15;
 
 export const getSetupBundleResponseFullSchedulePackMin = 14;

@@ -1,5 +1,6 @@
 import {
   buildSearchResponse,
+  ensureProviderHealthLoaded,
   getProviderHealth,
   isProviderConfigured,
   normalizeDiscovery,
@@ -13,6 +14,7 @@ import {
   type ProviderSearchResult,
   type SearchResponse,
 } from "./core";
+import { persistObservations } from "./storage";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -537,13 +539,14 @@ export async function searchMarket(query: string, mode: MarketMode, limit = 20):
       const result = await adapter.search({ query: normalizedQuery, limit: normalizedLimit, mode });
       observations.push(...result.observations.slice(0, normalizedLimit));
       discoveries.push(...result.discoveries.slice(0, normalizedLimit));
-      recordProviderHealth(providerId, {
+      await persistObservations(result.observations);
+      await recordProviderHealth(providerId, {
         ok: true,
         latencyMs: Date.now() - startedAt,
         observations: result.observations.length,
       });
     } catch (error) {
-      recordProviderHealth(providerId, {
+      await recordProviderHealth(providerId, {
         ok: false,
         latencyMs: Date.now() - startedAt,
         observations: 0,
@@ -555,7 +558,8 @@ export async function searchMarket(query: string, mode: MarketMode, limit = 20):
   return buildSearchResponse(normalizedQuery, observations, discoveries, providersQueried);
 }
 
-export function sourceHealth() {
+export async function sourceHealth() {
+  await ensureProviderHealthLoaded();
   return providerRegistry.map((provider) => {
     const metrics = getProviderHealth(provider.id);
     const configured = configuredProvider(provider.id);

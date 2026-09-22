@@ -121,6 +121,23 @@ paths:
         "200":
           description: Recent observations
           content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Observation" } } } }
+  /v1/admin/sold-comps:
+    post:
+      operationId: ingestSoldComps
+      tags: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SoldCompIngestRequest" }
+      responses:
+        "201":
+          description: Accepted and skipped sold comparisons
+          content: { application/json: { schema: { $ref: "#/components/schemas/SoldCompIngestResult" } } }
+        "400":
+          description: Invalid request
+        "403":
+          description: Admin authentication required
   /v1/setup-bundle:
     get:
       operationId: getSetupBundle
@@ -256,6 +273,43 @@ components:
         normalized_price: { type: number }
         condition: { type: string }
         url: { type: string, format: uri }
+    SoldCompInput:
+      type: object
+      required: [title, soldPrice, currency, soldAt, source, url]
+      properties:
+        id: { type: string }
+        query: { type: string }
+        title: { type: string }
+        soldPrice: { type: ["number", "string"] }
+        currency: { type: string }
+        soldAt: { type: string, format: date-time }
+        source: { type: string }
+        condition: { type: string }
+        url: { type: string, format: uri }
+        identity: { type: object, additionalProperties: true }
+        providerItemId: { type: string }
+        evidenceHash: { type: string }
+        fees: { type: [number, string, object] }
+        fee: { type: [number, string, object] }
+        feeAmount: { type: [number, string] }
+        feeRate: { type: [number, string] }
+        feePercent: { type: [number, string] }
+        shipping: { type: [number, string, object] }
+        shippingAmount: { type: [number, string] }
+    SoldCompIngestRequest:
+      type: object
+      required: [comps]
+      properties:
+        comps:
+          type: array
+          maxItems: 250
+          items: { $ref: "#/components/schemas/SoldCompInput" }
+    SoldCompIngestResult:
+      type: object
+      required: [accepted, skipped]
+      properties:
+        accepted: { type: integer, minimum: 0 }
+        skipped: { type: integer, minimum: 0 }
     SoldCompsResult:
       type: object
       required: [query, comps, conservative_value, liquidity, confidence]
