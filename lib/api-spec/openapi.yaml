@@ -76,7 +76,7 @@ paths:
       responses:
         "200":
           description: Price history
-          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Observation" } } } }
+          content: { application/json: { schema: { $ref: "#/components/schemas/PriceHistoryResponse" } } }
   /v1/sold-comps:
     get:
       operationId: getSoldComps
@@ -214,6 +214,15 @@ components:
           type: array
           description: Search references that are for discovery only and never count as price evidence.
           items: { $ref: "#/components/schemas/DiscoveryResult" }
+    PersistenceStatus:
+      type: string
+      enum: [available, unavailable]
+    PriceHistoryResponse:
+      type: object
+      required: [observations, persistence_status]
+      properties:
+        observations: { type: array, items: { $ref: "#/components/schemas/Observation" } }
+        persistence_status: { $ref: "#/components/schemas/PersistenceStatus" }
     DiscoveryResult:
       type: object
       required: [title, url, source, kind]
@@ -316,16 +325,17 @@ components:
         skipped: { type: integer, minimum: 0 }
     SoldCompsResult:
       type: object
-      required: [query, comps, conservative_value, liquidity, confidence]
+      required: [query, comps, conservative_value, liquidity, confidence, persistence_status]
       properties:
         query: { type: string }
         comps: { type: array, items: { $ref: "#/components/schemas/SoldComp" } }
         conservative_value: { type: ["number", "null"] }
         liquidity: { type: string }
         confidence: { type: number }
+        persistence_status: { $ref: "#/components/schemas/PersistenceStatus" }
     AdminSummary:
       type: object
-      required: [providers_total, providers_available, registry_coverage_percent, conflicts_24h, stale_24h, observations_24h]
+      required: [providers_total, providers_available, registry_coverage_percent, conflicts_24h, stale_24h, observations_24h, persistence_status]
       properties:
         providers_total: { type: integer }
         providers_available: { type: integer }
@@ -333,6 +343,7 @@ components:
         conflicts_24h: { type: integer }
         stale_24h: { type: integer }
         observations_24h: { type: integer }
+        persistence_status: { $ref: "#/components/schemas/PersistenceStatus" }
     ScheduleItem:
       type: object
       required: [name, prompt, ical]

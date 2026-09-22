@@ -8,6 +8,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Search, Loader2 } from "lucide-react"
 import { formatCurrency, formatDate } from "@/lib/utils"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { AlertCircle } from "lucide-react"
 
 export default function HistoryPage() {
   const [query, setQuery] = useState("")
@@ -67,7 +69,16 @@ export default function HistoryPage() {
 
           <TabsContent value="sold-comps" className="mt-0 space-y-6">
             {submittedQuery && compsData && (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <>
+                {compsData.persistence_status === "unavailable" && (
+                  <Alert variant="destructive">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>
+                      保存済みの販売実績に一時的にアクセスできません。表示中の結果は今回取得できた情報源のデータです。
+                    </AlertDescription>
+                  </Alert>
+                )}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <Card>
                   <CardContent className="p-6">
                     <p className="text-sm font-medium text-muted-foreground mb-1">保守的評価額</p>
@@ -94,7 +105,8 @@ export default function HistoryPage() {
                     </div>
                   </CardContent>
                 </Card>
-              </div>
+                </div>
+              </>
             )}
 
             <Card>
@@ -116,7 +128,11 @@ export default function HistoryPage() {
                     {isLoadingComps ? (
                       <TableRow><TableCell colSpan={5} className="text-center py-8">検索中...</TableCell></TableRow>
                     ) : !compsData?.comps?.length ? (
-                      <TableRow><TableCell colSpan={5} className="text-center py-8 text-muted-foreground">実績が見つかりません</TableCell></TableRow>
+                      <TableRow><TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                        {compsData?.persistence_status === "unavailable"
+                          ? "保存済みデータを一時的に利用できません"
+                          : "実績が見つかりません"}
+                      </TableCell></TableRow>
                     ) : (
                       compsData.comps.map((comp, idx) => (
                         <TableRow key={idx}>
@@ -148,6 +164,14 @@ export default function HistoryPage() {
                 <CardTitle>価格観測履歴</CardTitle>
               </CardHeader>
               <CardContent className="p-0">
+                {historyData?.persistence_status === "unavailable" && (
+                  <Alert variant="destructive" className="m-4">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>
+                      保存済みの価格履歴に一時的にアクセスできません。時間をおいて再試行してください。
+                    </AlertDescription>
+                  </Alert>
+                )}
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -160,10 +184,14 @@ export default function HistoryPage() {
                   <TableBody>
                     {isLoadingHistory ? (
                       <TableRow><TableCell colSpan={4} className="text-center py-8">検索中...</TableCell></TableRow>
-                    ) : !historyData?.length ? (
-                      <TableRow><TableCell colSpan={4} className="text-center py-8 text-muted-foreground">履歴が見つかりません</TableCell></TableRow>
+                    ) : !historyData?.observations?.length ? (
+                      <TableRow><TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
+                        {historyData?.persistence_status === "unavailable"
+                          ? "保存済みデータを一時的に利用できません"
+                          : "履歴が見つかりません"}
+                      </TableCell></TableRow>
                     ) : (
-                      historyData.map((obs) => (
+                      historyData.observations.map((obs) => (
                         <TableRow key={obs.id}>
                           <TableCell className="text-muted-foreground tabular-nums whitespace-nowrap">
                             {formatDate(obs.fetched_at)}

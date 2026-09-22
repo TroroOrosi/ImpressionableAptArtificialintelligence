@@ -136,8 +136,8 @@ async function writeRecords() {
     },
   }]);
 
-  if (inserted !== 1) {
-    throw new Error(`Expected one sold comp, inserted ${inserted}`);
+   if (inserted.accepted !== 1) {
+     throw new Error(`Expected one sold comp, inserted ${inserted.accepted}`);
   }
 
   await recordProviderHealth(marker, {
@@ -210,8 +210,10 @@ async function readRecords() {
   await ensureProviderHealthLoaded();
 
   console.log(JSON.stringify({
-    history,
-    soldComps,
+    history: history.records,
+    soldComps: soldComps.records,
+    historyPersistenceStatus: history.status,
+    soldCompsPersistenceStatus: soldComps.status,
     persistedHealth: persistedHealth.get(marker),
     coreHealth: getProviderHealth(marker),
   }));

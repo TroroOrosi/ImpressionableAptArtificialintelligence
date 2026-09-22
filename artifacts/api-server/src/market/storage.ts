@@ -16,6 +16,19 @@ import type {
 type DatabaseModule = typeof import("@workspace/db");
 
 let databaseModulePromise: Promise<DatabaseModule | null> | undefined;
+let databaseNotConfiguredLogged = false;
+
+export type MarketPersistenceStatus = "available" | "unavailable";
+
+export type MarketStorageReadResult<T> = {
+  records: T[];
+  status: MarketPersistenceStatus;
+};
+
+export type MarketStorageWriteResult = {
+  accepted: number;
+  status: MarketPersistenceStatus;
+};
 
 /**
  * Retention policy for the queryable market history.
@@ -107,16 +120,39 @@ export function getMarketHistoryCutoffs(
 }
 
 async function getDatabaseModule(): Promise<DatabaseModule | null> {
-  if (!process.env.DATABASE_URL) return null;
+  if (!process.env.DATABASE_URL) {
+    if (!databaseNotConfiguredLogged) {
+      logger.warn(
+        {
+          operation: "load_database_module",
+          persistence_status: "unavailable",
+          reason: "database_not_configured",
+        },
+        "Market persistence is unavailable",
+      );
+      databaseNotConfiguredLogged = true;
+    }
+    return null;
+  }
   databaseModulePromise ??= import("@workspace/db").catch((error: unknown) => {
-    logger.warn({ err: error }, "Market persistence is unavailable");
+    logger.warn(
+      {
+        err: error,
+        operation: "load_database_module",
+        persistence_status: "unavailable",
+      },
+      "Market persistence is unavailable",
+    );
     return null;
   });
   return databaseModulePromise;
 }
 
 function reportStorageFailure(operation: string, error: unknown) {
-  logger.warn({ err: error, operation }, "Market persistence operation failed");
+  logger.warn(
+    { err: error, operation, persistence_status: "unavailable" },
+    "Market persistence operation failed",
+  );
 }
 
 function asIso(value: Date | string) {
@@ -209,18 +245,22 @@ function observationValues(observation: Observation) {
   };
 }
 
-export async function persistObservations(observations: Observation[]) {
-  if (!observations.length) return;
+export async function persistObservations(
+  observations: Observation[],
+): Promise<MarketPersistenceStatus> {
+  if (!observations.length) return "available";
   const database = await getDatabaseModule();
-  if (!database) return;
+  if (!database) return "unavailable";
 
   try {
     await database.db
       .insert(database.marketObservations)
       .values(observations.map(observationValues))
       .onConflictDoNothing();
+    return "available";
   } catch (error) {
     reportStorageFailure("persist_observations", error);
+    return "unavailable";
   }
 }
 
@@ -265,11 +305,14 @@ function boundedHistoryLimit(limit: number) {
     : 100;
 }
 
-export async function getStoredPriceHistory(query: string, limit = 100): Promise<Observation[]> {
+export async function getStoredPriceHistory(
+  query: string,
+  limit = 100,
+): Promise<MarketStorageReadResult<Observation>> {
   const normalizedQuery = query.trim();
-  if (!normalizedQuery) return [];
+  if (!normalizedQuery) return { records: [], status: "available" };
   const database = await getDatabaseModule();
-  if (!database) return [];
+  if (!database) return { records: [], status: "unavailable" };
 
   try {
     const { observations: cutoff } = getMarketHistoryCutoffs();
@@ -282,16 +325,18 @@ export async function getStoredPriceHistory(query: string, limit = 100): Promise
       ))
       .orderBy(desc(database.marketObservations.fetchedAt))
       .limit(boundedHistoryLimit(limit));
-    return rows.map(mapObservation);
+    return { records: rows.map(mapObservation), status: "available" };
   } catch (error) {
     reportStorageFailure("read_price_history", error);
-    return [];
+    return { records: [], status: "unavailable" };
   }
 }
 
-export async function getStoredObservations(limit = 100): Promise<Observation[]> {
+export async function getStoredObservations(
+  limit = 100,
+): Promise<MarketStorageReadResult<Observation>> {
   const database = await getDatabaseModule();
-  if (!database) return [];
+  if (!database) return { records: [], status: "unavailable" };
 
   try {
     const { observations: cutoff } = getMarketHistoryCutoffs();
@@ -301,10 +346,10 @@ export async function getStoredObservations(limit = 100): Promise<Observation[]>
       .where(gte(database.marketObservations.fetchedAt, cutoff))
       .orderBy(desc(database.marketObservations.fetchedAt))
       .limit(boundedHistoryLimit(limit));
-    return rows.map(mapObservation);
+    return { records: rows.map(mapObservation), status: "available" };
   } catch (error) {
     reportStorageFailure("read_observations", error);
-    return [];
+    return { records: [], status: "unavailable" };
   }
 }
 
@@ -680,14 +725,16 @@ export function normalizeSoldCompRecord(input: SoldCompInput): SoldCompRecord | 
   };
 }
 
-export async function persistSoldComps(inputs: SoldCompInput[]) {
-  if (!inputs.length) return 0;
+export async function persistSoldComps(
+  inputs: SoldCompInput[],
+): Promise<MarketStorageWriteResult> {
+  if (!inputs.length) return { accepted: 0, status: "available" };
   const database = await getDatabaseModule();
-  if (!database) return 0;
+  if (!database) return { accepted: 0, status: "unavailable" };
   const values = inputs
     .map(normalizeSoldComp)
     .filter((value): value is NonNullable<typeof value> => Boolean(value));
-  if (!values.length) return 0;
+  if (!values.length) return { accepted: 0, status: "available" };
 
   try {
     const inserted = await database.db
@@ -695,10 +742,10 @@ export async function persistSoldComps(inputs: SoldCompInput[]) {
       .values(values)
       .onConflictDoNothing()
       .returning({ id: database.marketSoldComps.id });
-    return inserted.length;
+    return { accepted: inserted.length, status: "available" };
   } catch (error) {
     reportStorageFailure("persist_sold_comps", error);
-    return 0;
+    return { accepted: 0, status: "unavailable" };
   }
 }
 
@@ -728,11 +775,14 @@ function soldCompSearchWhere(
   );
 }
 
-export async function getStoredSoldComps(query: string, limit = 100): Promise<SoldCompRecord[]> {
+export async function getStoredSoldComps(
+  query: string,
+  limit = 100,
+): Promise<MarketStorageReadResult<SoldCompRecord>> {
   const normalizedQuery = query.trim();
-  if (!normalizedQuery) return [];
+  if (!normalizedQuery) return { records: [], status: "available" };
   const database = await getDatabaseModule();
-  if (!database) return [];
+  if (!database) return { records: [], status: "unavailable" };
 
   try {
     const { soldComps: cutoff } = getMarketHistoryCutoffs();
@@ -745,10 +795,10 @@ export async function getStoredSoldComps(query: string, limit = 100): Promise<So
       ))
       .orderBy(desc(database.marketSoldComps.soldAt))
       .limit(boundedHistoryLimit(limit));
-    return rows.map(mapSoldComp);
+    return { records: rows.map(mapSoldComp), status: "available" };
   } catch (error) {
     reportStorageFailure("read_sold_comps", error);
-    return [];
+    return { records: [], status: "unavailable" };
   }
 }
 

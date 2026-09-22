@@ -10,6 +10,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { formatCurrency, formatPercentage, formatRelativeTime } from "@/lib/utils"
 import { StatusBadge, ConfidenceBar, ActionableBadge } from "@/components/shared/domain-ui"
 import { ShieldAlert, Database, Clock, Activity, AlertTriangle } from "lucide-react"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { AlertCircle } from "lucide-react"
 
 export default function Home() {
   const { data: summary, isLoading: isLoadingSummary } = useGetAdminSummary()
@@ -23,6 +25,14 @@ export default function Home() {
         description="システム全体の健全性と最近のデータ推移" 
       />
       <PageContent className="space-y-6">
+        {summary?.persistence_status === "unavailable" && (
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>
+              保存済みの市場データに一時的にアクセスできません。現在の情報源の検索は継続していますが、履歴や集計は再試行してください。
+            </AlertDescription>
+          </Alert>
+        )}
         
         {/* KPI Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">

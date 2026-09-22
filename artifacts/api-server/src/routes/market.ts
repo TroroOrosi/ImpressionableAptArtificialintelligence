@@ -23,6 +23,7 @@ import {
   cleanupMarketHistory,
   persistObservations,
   persistSoldComps,
+  type MarketPersistenceStatus,
   type SoldCompInput,
 } from "../market/storage";
 
@@ -155,8 +156,9 @@ async function soldCompsRoute(queryValue: unknown, limitValue: unknown) {
   const query = queryFrom(queryValue);
   const limit = limitFrom(limitValue);
   const live = await searchSoldComps(query, limit);
+  let writeStatus: MarketPersistenceStatus = "available";
   if (live.comps.length) {
-    await persistSoldComps(live.comps.map((comp) => ({
+    const persisted = await persistSoldComps(live.comps.map((comp) => ({
       query,
       title: comp.title,
       soldPrice: comp.sold_price,
@@ -167,16 +169,27 @@ async function soldCompsRoute(queryValue: unknown, limitValue: unknown) {
       url: comp.url,
       identity: comp.identity,
     })));
+    writeStatus = persisted.status;
   }
 
   const stored = await getStoredSoldComps(query, limit);
   const merged = new Map<string, (typeof live.comps)[number]>();
-  for (const comp of stored) merged.set(soldCompKey(comp), comp);
+  for (const comp of stored.records) merged.set(soldCompKey(comp), comp);
   for (const comp of live.comps) merged.set(soldCompKey(comp), comp);
   const comps = [...merged.values()]
     .sort((a, b) => new Date(b.sold_at).getTime() - new Date(a.sold_at).getTime())
     .slice(0, limit);
-  return buildSoldCompsResponse(query, comps);
+  const persistenceStatus = writeStatus === "unavailable" || stored.status === "unavailable"
+    ? "unavailable"
+    : "available";
+  return buildSoldCompsResponse(query, comps, persistenceStatus);
+}
+
+function priceHistoryResponse(result: Awaited<ReturnType<typeof getStoredPriceHistory>>) {
+  return {
+    observations: result.records,
+    persistence_status: result.status,
+  };
 }
 
 router.get("/v1/public/verify", async (req,res) => { try { res.json(await genericVerify(String(req.query.url||""))); } catch(e) { res.status(400).json({ error: e instanceof Error ? e.message : "verification_failed" }); } });
@@ -196,7 +209,7 @@ router.get("/v1/source-coverage", (_req,res) => {
   res.json({ ...computeCoverage(sources), sources });
 });
 router.get("/v1/price-history", async (req,res): Promise<void> => {
-  res.json(await getStoredPriceHistory(queryFrom(req.query.identity)));
+  res.json(priceHistoryResponse(await getStoredPriceHistory(queryFrom(req.query.identity))));
 });
 router.get("/v1/sold-comps", async (req,res): Promise<void> => {
   res.json(await soldCompsRoute(req.query.q, req.query.limit));
@@ -207,7 +220,10 @@ router.get("/v1/compare", async (req,res) => {
 });
 router.get("/v1/admin/summary", async (_req,res): Promise<void> => {
   const sources = trustedSources();
-  const health = await sourceHealth();
+  const [health, observations] = await Promise.all([
+    sourceHealth(),
+    getStoredObservations(1),
+  ]);
   res.json({
     providers_total: providerRegistry.length,
     providers_available: health.filter((provider) => provider.available).length,
@@ -216,11 +232,12 @@ router.get("/v1/admin/summary", async (_req,res): Promise<void> => {
     stale_24h: 0,
     observations_24h: 0,
     uptime_seconds: Math.floor((Date.now()-started)/1000),
+    persistence_status: observations.status,
   });
 });
 router.get("/v1/admin/conflicts", (_req,res) => res.json([]));
 router.get("/v1/admin/observations", async (_req,res): Promise<void> => {
-  res.json(await getStoredObservations());
+  res.json((await getStoredObservations()).records);
 });
 router.post("/v1/admin/history/cleanup", async (req,res): Promise<void> => {
   if (!adminTokenMatches(req)) {
@@ -262,8 +279,12 @@ router.post("/v1/admin/sold-comps", async (req,res): Promise<void> => {
   }
 
   const inputs = candidates.filter(isRecord) as SoldCompInput[];
-  const accepted = await persistSoldComps(inputs);
-  res.status(201).json({ accepted, skipped: candidates.length - accepted });
+  const persisted = await persistSoldComps(inputs);
+  if (persisted.status === "unavailable") {
+    res.status(503).json({ error:"market_persistence_unavailable" });
+    return;
+  }
+  res.status(201).json({ accepted: persisted.accepted, skipped: candidates.length - persisted.accepted });
 });
 router.post("/v1/admin/trusted-domains", (req,res) => {
   if (!adminTokenMatches(req)) {
@@ -302,7 +323,9 @@ router.post("/mcp", async (req,res) => {
       else if (name === "get_sold_comps") {
         data = await soldCompsRoute(args.q, args.limit);
       }
-      else if (name === "get_price_history") data = await getStoredPriceHistory(queryFrom(args.identity ?? args.q));
+      else if (name === "get_price_history") {
+        data = priceHistoryResponse(await getStoredPriceHistory(queryFrom(args.identity ?? args.q)));
+      }
       else data = { query: args.q || "", results: [], providers_queried: [], generated_at: new Date().toISOString() };
       res.json({ jsonrpc:"2.0", id, result:{ content:[{ type:"text", text:JSON.stringify(data) }], structuredContent:data } }); return;
     } catch (error) {

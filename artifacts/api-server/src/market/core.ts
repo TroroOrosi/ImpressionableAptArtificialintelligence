@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
   loadStoredProviderHealth,
   persistProviderHealth,
+  type MarketPersistenceStatus,
 } from "./storage";
 
 export type VerificationStatus = "VERIFIED_STRONG" | "VERIFIED_SINGLE" | "CONFLICT" | "STALE" | "UNVERIFIED";
@@ -119,6 +120,7 @@ export type SoldCompsResult = {
   conservative_value: number | null;
   liquidity: "insufficient_data" | "low" | "medium" | "high";
   confidence: number;
+  persistence_status: MarketPersistenceStatus;
 };
 
 export type ProviderSearchResult = {
@@ -320,7 +322,11 @@ function removePriceOutliers(comps: SoldCompRecord[]) {
   return valid.filter((comp) => comp.normalized_price >= lowerFence && comp.normalized_price <= upperFence);
 }
 
-export function buildSoldCompsResponse(query: string, comps: SoldCompRecord[]): SoldCompsResult {
+export function buildSoldCompsResponse(
+  query: string,
+  comps: SoldCompRecord[],
+  persistenceStatus: MarketPersistenceStatus = "available",
+): SoldCompsResult {
   const usable = removePriceOutliers(comps);
   const conservative = quantile(usable.map((comp) => comp.normalized_price), 0.25);
   const sourceCount = new Set(usable.map((comp) => comp.source.toLowerCase())).size;
@@ -340,6 +346,7 @@ export function buildSoldCompsResponse(query: string, comps: SoldCompRecord[]): 
           ? "medium"
           : "high",
     confidence,
+    persistence_status: persistenceStatus,
   };
 }
 

@@ -137,6 +137,7 @@ test("sold comps endpoint returns structured official sales with identity", { co
       conservative_value: number | null;
       liquidity: string;
       confidence: number;
+      persistence_status: string;
     };
     assert.equal(body.comps.length, 1);
     assert.deepEqual(body.comps[0], {
@@ -158,6 +159,7 @@ test("sold comps endpoint returns structured official sales with identity", { co
     assert.equal(body.conservative_value, 15000);
     assert.equal(body.liquidity, "low");
     assert.equal(body.confidence, 0.15);
+    assert.equal(body.persistence_status, "unavailable");
   } finally {
     globalThis.fetch = originalFetch;
     if (savedDatabaseUrl === undefined) delete process.env.DATABASE_URL;
@@ -166,5 +168,25 @@ test("sold comps endpoint returns structured official sales with identity", { co
     else process.env.EBAY_CLIENT_ID = savedEbayClientId;
     if (savedEbayAccessToken === undefined) delete process.env.EBAY_ACCESS_TOKEN;
     else process.env.EBAY_ACCESS_TOKEN = savedEbayAccessToken;
+  }
+}));
+
+test("history endpoint distinguishes unavailable persistence from no history", { concurrency: false }, () => withServer(async (base) => {
+  const savedDatabaseUrl = process.env.DATABASE_URL;
+  try {
+    process.env.DATABASE_URL = "";
+    const response = await fetch(`${base}/v1/price-history?identity=camera`);
+    assert.equal(response.status, 200);
+    const body = await response.json() as {
+      observations: unknown[];
+      persistence_status: string;
+    };
+    assert.deepEqual(body, {
+      observations: [],
+      persistence_status: "unavailable",
+    });
+  } finally {
+    if (savedDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = savedDatabaseUrl;
   }
 }));

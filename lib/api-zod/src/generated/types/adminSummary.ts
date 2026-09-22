@@ -5,6 +5,7 @@
  * Market Intel MCP API
  * OpenAPI spec version: 1.0.0
  */
+import type { PersistenceStatus } from './persistenceStatus';
 
 export interface AdminSummary {
   providers_total: number;
@@ -13,4 +14,5 @@ export interface AdminSummary {
   conflicts_24h: number;
   stale_24h: number;
   observations_24h: number;
+  persistence_status: PersistenceStatus;
 }

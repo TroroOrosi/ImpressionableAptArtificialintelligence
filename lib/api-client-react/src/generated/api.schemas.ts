@@ -110,6 +110,19 @@ export interface SearchResponse {
   discovery?: DiscoveryResult[];
 }
 
+export type PersistenceStatus = typeof PersistenceStatus[keyof typeof PersistenceStatus];
+
+
+export const PersistenceStatus = {
+  available: 'available',
+  unavailable: 'unavailable',
+} as const;
+
+export interface PriceHistoryResponse {
+  observations: Observation[];
+  persistence_status: PersistenceStatus;
+}
+
 /**
  * @nullable
  */
@@ -229,6 +242,7 @@ export interface SoldCompsResult {
   conservative_value: number | null;
   liquidity: string;
   confidence: number;
+  persistence_status: PersistenceStatus;
 }
 
 export interface AdminSummary {
@@ -238,6 +252,7 @@ export interface AdminSummary {
   conflicts_24h: number;
   stale_24h: number;
   observations_24h: number;
+  persistence_status: PersistenceStatus;
 }
 
 export interface ScheduleItem {

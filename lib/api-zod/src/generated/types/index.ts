@@ -16,6 +16,8 @@ export * from './getPriceHistoryParams';
 export * from './getSoldCompsParams';
 export * from './healthStatus';
 export * from './observation';
+export * from './persistenceStatus';
+export * from './priceHistoryResponse';
 export * from './productIdentity';
 export * from './scheduleItem';
 export * from './searchAuctionsParams';

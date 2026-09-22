@@ -5,15 +5,10 @@
  * Market Intel MCP API
  * OpenAPI spec version: 1.0.0
  */
+import type { Observation } from './observation';
 import type { PersistenceStatus } from './persistenceStatus';
-import type { SoldComp } from './soldComp';
 
-export interface SoldCompsResult {
-  query: string;
-  comps: SoldComp[];
-  /** @nullable */
-  conservative_value: number | null;
-  liquidity: string;
-  confidence: number;
+export interface PriceHistoryResponse {
+  observations: Observation[];
   persistence_status: PersistenceStatus;
 }

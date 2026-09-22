@@ -248,12 +248,13 @@ export const GetPriceHistoryQueryParams = zod.object({
   "identity": zod.coerce.string()
 })
 
-export const getPriceHistoryResponseConfidenceMin = 0;
-export const getPriceHistoryResponseConfidenceMax = 1;
+export const getPriceHistoryResponseObservationsItemConfidenceMin = 0;
+export const getPriceHistoryResponseObservationsItemConfidenceMax = 1;
 
 
 
-export const GetPriceHistoryResponseItem = zod.object({
+export const GetPriceHistoryResponse = zod.object({
+  "observations": zod.array(zod.object({
   "id": zod.string(),
   "title": zod.string(),
   "value": zod.number(),
@@ -262,7 +263,7 @@ export const GetPriceHistoryResponseItem = zod.object({
   "source_tier": zod.number().int(),
   "fetched_at": zod.coerce.date(),
   "freshness_seconds": zod.number().int(),
-  "confidence": zod.number().min(getPriceHistoryResponseConfidenceMin).max(getPriceHistoryResponseConfidenceMax),
+  "confidence": zod.number().min(getPriceHistoryResponseObservationsItemConfidenceMin).max(getPriceHistoryResponseObservationsItemConfidenceMax),
   "url": zod.string().url(),
   "evidence_hash": zod.string(),
   "remaining_seconds": zod.number().int().nullish(),
@@ -285,8 +286,9 @@ export const GetPriceHistoryResponseItem = zod.object({
   "cert_number": zod.string().nullish(),
   "accessories": zod.array(zod.string()).optional()
 })
+})),
+  "persistence_status": zod.enum(['available', 'unavailable'])
 })
-export const GetPriceHistoryResponse = zod.array(GetPriceHistoryResponseItem)
 
 
 export const getSoldCompsQueryLimitDefault = 20;
@@ -331,7 +333,8 @@ export const GetSoldCompsResponse = zod.object({
 })),
   "conservative_value": zod.number().nullable(),
   "liquidity": zod.string(),
-  "confidence": zod.number()
+  "confidence": zod.number(),
+  "persistence_status": zod.enum(['available', 'unavailable'])
 })
 
 
@@ -403,7 +406,8 @@ export const GetAdminSummaryResponse = zod.object({
   "registry_coverage_percent": zod.number(),
   "conflicts_24h": zod.number().int(),
   "stale_24h": zod.number().int(),
-  "observations_24h": zod.number().int()
+  "observations_24h": zod.number().int(),
+  "persistence_status": zod.enum(['available', 'unavailable'])
 })
 
 

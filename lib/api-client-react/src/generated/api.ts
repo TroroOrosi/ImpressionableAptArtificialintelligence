@@ -27,6 +27,7 @@ import type {
   GetSoldCompsParams,
   HealthStatus,
   Observation,
+  PriceHistoryResponse,
   SearchAuctionsParams,
   SearchProductsParams,
   SearchResponse,
@@ -528,9 +529,9 @@ export const getGetPriceHistoryUrl = (params: GetPriceHistoryParams,) => {
   return stringifiedParams.length > 0 ? `/api/v1/price-history?${stringifiedParams}` : `/api/v1/price-history`
 }
 
-export const getPriceHistory = async (params: GetPriceHistoryParams, options?: Parameters<typeof customFetch>[1]): Promise<Observation[]> => {
+export const getPriceHistory = async (params: GetPriceHistoryParams, options?: Parameters<typeof customFetch>[1]): Promise<PriceHistoryResponse> => {
 
-  return customFetch<Observation[]>(getGetPriceHistoryUrl(params),
+  return customFetch<PriceHistoryResponse>(getGetPriceHistoryUrl(params),
   {
     ...options,
     method: 'GET'
