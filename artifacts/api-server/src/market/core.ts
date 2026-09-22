@@ -344,16 +344,26 @@ export const SOLD_COMP_RECENCY_DAYS = 30;
 export const SOLD_COMP_RECENCY_MIN_DAYS = 1;
 export const SOLD_COMP_RECENCY_MAX_DAYS = 365;
 
-export function getSoldCompRecencyDays(rawValue = process.env.SOLD_COMP_RECENCY_DAYS) {
+function parseSoldCompRecencyDays(rawValue: string | undefined) {
   const value = rawValue?.trim();
-  if (!value || !/^\d+$/.test(value)) return SOLD_COMP_RECENCY_DAYS;
+  if (!value || !/^\d+$/.test(value)) return null;
 
   const days = Number(value);
   return Number.isSafeInteger(days)
     && days >= SOLD_COMP_RECENCY_MIN_DAYS
     && days <= SOLD_COMP_RECENCY_MAX_DAYS
     ? days
-    : SOLD_COMP_RECENCY_DAYS;
+    : null;
+}
+
+export function getSoldCompRecencyDays(rawValue = process.env.SOLD_COMP_RECENCY_DAYS) {
+  return parseSoldCompRecencyDays(rawValue) ?? SOLD_COMP_RECENCY_DAYS;
+}
+
+export function getSoldCompRecencyWarning(rawValue = process.env.SOLD_COMP_RECENCY_DAYS) {
+  if (rawValue === undefined || parseSoldCompRecencyDays(rawValue) != null) return null;
+
+  return `SOLD_COMP_RECENCY_DAYS was rejected; using the safe default of ${SOLD_COMP_RECENCY_DAYS} days. Accepted values are whole days from ${SOLD_COMP_RECENCY_MIN_DAYS} through ${SOLD_COMP_RECENCY_MAX_DAYS}.`;
 }
 
 const millisecondsPerDay = 24 * 60 * 60 * 1_000;

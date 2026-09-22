@@ -1,5 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
+import { getSoldCompRecencyWarning } from "./market/core";
 import { cleanupMarketHistory } from "./market/storage";
 
 const rawPort = process.env["PORT"];
@@ -31,6 +32,11 @@ function startHistoryCleanup() {
 
 if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
+}
+
+const soldCompRecencyWarning = getSoldCompRecencyWarning();
+if (soldCompRecencyWarning) {
+  logger.warn(soldCompRecencyWarning);
 }
 
 app.listen(port, (err) => {

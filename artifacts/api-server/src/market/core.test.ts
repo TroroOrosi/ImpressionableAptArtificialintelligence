@@ -6,6 +6,7 @@ import {
   computeCoverage,
   buildSoldCompsResponse,
   getSoldCompRecencyDays,
+  getSoldCompRecencyWarning,
   isActionable,
   providerRegistry,
   summarizeSoldCompsFreshness,
@@ -203,6 +204,25 @@ test("sold comp freshness accepts a bounded setting and falls back for invalid v
       process.env.SOLD_COMP_RECENCY_DAYS = invalid;
       assert.equal(getSoldCompRecencyDays(), SOLD_COMP_RECENCY_DAYS);
       assert.equal(summarizeSoldCompsFreshness([comp], now).recent_window_days, SOLD_COMP_RECENCY_DAYS);
+    }
+  } finally {
+    if (savedRecencyDays === undefined) delete process.env.SOLD_COMP_RECENCY_DAYS;
+    else process.env.SOLD_COMP_RECENCY_DAYS = savedRecencyDays;
+  }
+});
+
+test("sold comp freshness warning identifies the safe policy without echoing the setting", { concurrency: false }, () => {
+  const savedRecencyDays = process.env.SOLD_COMP_RECENCY_DAYS;
+  try {
+    delete process.env.SOLD_COMP_RECENCY_DAYS;
+    assert.equal(getSoldCompRecencyWarning(), null);
+    assert.equal(getSoldCompRecencyWarning("14"), null);
+    assert.equal(getSoldCompRecencyWarning(" 14 "), null);
+
+    const expectedWarning = "SOLD_COMP_RECENCY_DAYS was rejected; using the safe default of 30 days. Accepted values are whole days from 1 through 365.";
+    for (const invalid of ["", "0", "366", "14.5", "not-a-number"]) {
+      const warning = getSoldCompRecencyWarning(invalid);
+      assert.equal(warning, expectedWarning);
     }
   } finally {
     if (savedRecencyDays === undefined) delete process.env.SOLD_COMP_RECENCY_DAYS;
