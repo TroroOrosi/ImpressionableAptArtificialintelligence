@@ -33,6 +33,8 @@
 - アクション可能なのは鮮度条件を満たす VERIFIED_STRONG / VERIFIED_SINGLE のみ。
 - カバレッジはtrusted-source registryに対して測定し、インターネット全体の網羅率とは表現しない。
 - 未設定の任意プロバイダーはエラーにせず無効化する。
+- 履歴保持は observations が fetched time 基準で180日、sold comps が sold time 基準で730日。API起動時と日次で古い行を500行ずつ、1テーブルあたり最大5,000行まで削除し、次回実行へ繰り越す。
+- 履歴の読み取りと削除は各テーブルの timestamp index と同じ保持 cutoff を使う。`market_source_health` は cleanup の対象外。
 
 ## Product
 

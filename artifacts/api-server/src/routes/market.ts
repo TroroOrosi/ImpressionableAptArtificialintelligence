@@ -20,6 +20,7 @@ import {
   getStoredObservations,
   getStoredPriceHistory,
   getStoredSoldComps,
+  cleanupMarketHistory,
   persistObservations,
   persistSoldComps,
   type SoldCompInput,
@@ -220,6 +221,29 @@ router.get("/v1/admin/summary", async (_req,res): Promise<void> => {
 router.get("/v1/admin/conflicts", (_req,res) => res.json([]));
 router.get("/v1/admin/observations", async (_req,res): Promise<void> => {
   res.json(await getStoredObservations());
+});
+router.post("/v1/admin/history/cleanup", async (req,res): Promise<void> => {
+  if (!adminTokenMatches(req)) {
+    res.status(403).json({ error:"forbidden" });
+    return;
+  }
+
+  const body = isRecord(req.body) ? req.body : {};
+  if (body.dry_run !== undefined && typeof body.dry_run !== "boolean") {
+    res.status(400).json({ error:"dry_run must be a boolean" });
+    return;
+  }
+
+  try {
+    const result = await cleanupMarketHistory({ dryRun: body.dry_run === true });
+    if (result.status === "unavailable") {
+      res.status(503).json({ error:"market_persistence_unavailable" });
+      return;
+    }
+    res.json(result);
+  } catch {
+    res.status(503).json({ error:"history_cleanup_failed" });
+  }
 });
 router.post("/v1/admin/sold-comps", async (req,res): Promise<void> => {
   if (!adminTokenMatches(req)) {

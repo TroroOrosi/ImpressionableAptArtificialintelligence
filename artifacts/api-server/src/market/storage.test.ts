@@ -18,7 +18,11 @@ function databaseUrlFor(databaseName: string) {
   return url.toString();
 }
 
-function runFixture(mode: "setup" | "write" | "read", databaseUrl: string, marker: string) {
+function runFixture(
+  mode: "setup" | "write" | "cleanup" | "read",
+  databaseUrl: string,
+  marker: string,
+) {
   return execFileSync(
     process.execPath,
     ["--import", "tsx", fixtureScript, mode],
@@ -33,6 +37,18 @@ function runFixture(mode: "setup" | "write" | "read", databaseUrl: string, marke
       stdio: ["ignore", "pipe", "pipe"],
     },
   ).trim();
+}
+
+function parseFixtureJson(output: string) {
+  const lines = output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    try {
+      return JSON.parse(lines[index] as string) as Record<string, unknown>;
+    } catch {
+      // Structured logger output may precede the fixture's JSON payload.
+    }
+  }
+  throw new Error(`Fixture did not emit JSON: ${output}`);
 }
 
 test("market records survive a fresh storage and core instance", {
@@ -51,6 +67,19 @@ test("market records survive a fresh storage and core instance", {
 
     runFixture("setup", databaseUrl, marker);
     runFixture("write", databaseUrl, marker);
+    const cleanup = parseFixtureJson(runFixture("cleanup", databaseUrl, marker)) as {
+      status: string;
+      observationsDeleted: number;
+      soldCompsDeleted: number;
+      observationsRemaining: boolean;
+      soldCompsRemaining: boolean;
+    };
+    assert.equal(cleanup.status, "completed");
+    assert.equal(cleanup.observationsDeleted, 1);
+    assert.equal(cleanup.soldCompsDeleted, 1);
+    assert.equal(cleanup.observationsRemaining, false);
+    assert.equal(cleanup.soldCompsRemaining, false);
+
     const persisted = JSON.parse(runFixture("read", databaseUrl, marker)) as {
       history: Array<Record<string, unknown>>;
       soldComps: Array<Record<string, unknown>>;

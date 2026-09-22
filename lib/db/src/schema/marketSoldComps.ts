@@ -32,6 +32,7 @@ export const marketSoldComps = pgTable(
   (table) => ({
     evidenceHashIndex: uniqueIndex("market_sold_comps_evidence_hash_idx").on(table.evidenceHash),
     queryKeyIndex: index("market_sold_comps_query_key_idx").on(table.queryKey),
+    // Retention cleanup and newest-first sold-comp reads are bounded by this index.
     soldAtIndex: index("market_sold_comps_sold_at_idx").on(table.soldAt),
     titleIndex: index("market_sold_comps_title_idx").on(table.title),
   }),

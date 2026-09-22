@@ -7,6 +7,7 @@ import {
   type Observation,
 } from "./core";
 import {
+  cleanupMarketHistory,
   getStoredPriceHistory,
   getStoredSoldComps,
   loadStoredProviderHealth,
@@ -148,6 +149,58 @@ async function writeRecords() {
   });
 }
 
+async function seedOldRecordsAndCleanup() {
+  await db.execute(sql`
+    INSERT INTO market_observations (
+      id, title, value, currency, source, source_tier, fetched_at,
+      freshness_seconds, remaining_seconds, confidence, url, evidence_hash,
+      identity, actionable
+    ) VALUES (
+      ${`${marker}-old-observation`},
+      ${`Old restart fixture ${marker}`},
+      12000,
+      'JPY',
+      'restart-fixture-old',
+      1,
+      ${new Date("2010-01-01T00:00:00.000Z")},
+      42,
+      NULL,
+      0.5,
+      ${`https://example.com/${marker}/old-observation`},
+      ${`${marker}-old-observation-evidence`},
+      ${JSON.stringify({ model: marker, accessories: [] })}::jsonb,
+      true
+    )
+  `);
+  await db.execute(sql`
+    INSERT INTO market_sold_comps (
+      id, query_key, title, sold_price, currency, sold_at, source,
+      normalized_price, condition, url, fee_amount, shipping_amount,
+      identity, evidence_hash
+    ) VALUES (
+      ${`${marker}-old-sold`},
+      ${marker},
+      ${`Old sold ${marker}`},
+      80,
+      'USD',
+      ${new Date("2010-01-01T00:00:00.000Z")},
+      'restart-fixture-old',
+      10000,
+      'good',
+      ${`https://example.com/${marker}/old-sold`},
+      0,
+      0,
+      ${JSON.stringify({ model: marker, accessories: [] })}::jsonb,
+      ${`${marker}-old-sold-evidence`}
+    )
+  `);
+
+  const result = await cleanupMarketHistory({
+    now: new Date("2026-09-22T12:00:00.000Z"),
+  });
+  console.log(JSON.stringify(result));
+}
+
 async function readRecords() {
   const [history, soldComps, persistedHealth] = await Promise.all([
     getStoredPriceHistory(marker),
@@ -169,6 +222,8 @@ try {
     await createTables();
   } else if (mode === "write") {
     await writeRecords();
+  } else if (mode === "cleanup") {
+    await seedOldRecordsAndCleanup();
   } else if (mode === "read") {
     await readRecords();
   } else {

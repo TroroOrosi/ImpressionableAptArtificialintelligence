@@ -33,6 +33,7 @@ export const marketObservations = pgTable(
   },
   (table) => ({
     evidenceHashIndex: uniqueIndex("market_observations_evidence_hash_idx").on(table.evidenceHash),
+    // Retention cleanup and newest-first history reads are bounded by this index.
     fetchedAtIndex: index("market_observations_fetched_at_idx").on(table.fetchedAt),
     titleIndex: index("market_observations_title_idx").on(table.title),
   }),
