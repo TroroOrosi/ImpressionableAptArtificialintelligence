@@ -2,3 +2,4 @@
 - [Artifact build environment](build-environment.md) — manual monorepo builds need workflow-style PORT and BASE_PATH values.
 - [Market test database readiness](market-test-environment.md) — DATABASE_URL may exist before the market tables are applied, so persistence checks need schema readiness.
 - [Workspace declaration freshness](typecheck-declarations.md) — dependent typechecks can read stale generated declarations after schema changes; refresh project-reference outputs first.
+- [Post-merge disconnects](post-merge-disconnects.md) — an unexpected setup disconnect can be transient; retry the idempotent setup before changing the script.
