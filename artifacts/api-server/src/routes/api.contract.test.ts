@@ -316,6 +316,90 @@ test("sold comps freshness flags old evidence without changing the estimate", { 
   }
 }));
 
+test("sold comps freshness flags mixed-age evidence without changing the estimate", { concurrency: false }, () => withServer(async (base) => {
+  const savedDatabaseUrl = process.env.DATABASE_URL;
+  const savedEbayClientId = process.env.EBAY_CLIENT_ID;
+  const savedEbayAccessToken = process.env.EBAY_ACCESS_TOKEN;
+  const savedEbayMarketplace = process.env.EBAY_MARKETPLACE_ID;
+  const originalFetch = globalThis.fetch;
+  const recentSoldAt = new Date(Date.now() - 2 * 24 * 60 * 60 * 1_000).toISOString();
+  const staleSoldAt = new Date(Date.now() - 45 * 24 * 60 * 60 * 1_000).toISOString();
+  try {
+    process.env.DATABASE_URL = "";
+    process.env.EBAY_CLIENT_ID = "test-ebay";
+    process.env.EBAY_ACCESS_TOKEN = "test-ebay-token";
+    process.env.EBAY_MARKETPLACE_ID = "EBAY_US";
+    globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.startsWith(base)) return originalFetch(input, init);
+      if (url.includes("/buy/marketplace-insights/v1_beta/item_sales/search")) {
+        return new Response(JSON.stringify({
+          itemSales: [
+            {
+              title: "Recent camera",
+              soldPrice: { value: "100", currency: "USD" },
+              lastSoldDate: recentSoldAt,
+              condition: "USED",
+              itemWebUrl: "https://www.ebay.example/recent-camera",
+              itemId: "recent-camera",
+              gtin: "4900000000001",
+              brand: "Example",
+            },
+            {
+              title: "Stale camera",
+              soldPrice: { value: "100", currency: "USD" },
+              lastSoldDate: staleSoldAt,
+              condition: "USED",
+              itemWebUrl: "https://www.ebay.example/stale-camera",
+              itemId: "stale-camera",
+              gtin: "4900000000001",
+              brand: "Example",
+            },
+          ],
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`Unexpected test URL: ${url}`);
+    }) as typeof fetch;
+
+    const response = await fetch(`${base}/v1/sold-comps?q=mixed-camera&limit=10`);
+    assert.equal(response.status, 200);
+    const body = await response.json() as {
+      comps: unknown[];
+      conservative_value: number | null;
+      freshness: {
+        status: string;
+        recent_window_days: number;
+        recent_count: number;
+        stale_count: number;
+        missing_count: number;
+        latest_sold_at: string | null;
+        oldest_sold_at: string | null;
+      };
+    };
+    assert.equal(body.comps.length, 2);
+    assert.equal(body.conservative_value, 15000);
+    assert.deepEqual(body.freshness, {
+      status: "stale",
+      recent_window_days: 30,
+      recent_count: 1,
+      stale_count: 1,
+      missing_count: 0,
+      latest_sold_at: recentSoldAt,
+      oldest_sold_at: staleSoldAt,
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (savedDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = savedDatabaseUrl;
+    if (savedEbayClientId === undefined) delete process.env.EBAY_CLIENT_ID;
+    else process.env.EBAY_CLIENT_ID = savedEbayClientId;
+    if (savedEbayAccessToken === undefined) delete process.env.EBAY_ACCESS_TOKEN;
+    else process.env.EBAY_ACCESS_TOKEN = savedEbayAccessToken;
+    if (savedEbayMarketplace === undefined) delete process.env.EBAY_MARKETPLACE_ID;
+    else process.env.EBAY_MARKETPLACE_ID = savedEbayMarketplace;
+  }
+}));
+
 test("sold comps route exposes configured freshness window and safe fallback", { concurrency: false }, () => withServer(async (base) => {
   const savedDatabaseUrl = process.env.DATABASE_URL;
   const savedRecencyDays = process.env.SOLD_COMP_RECENCY_DAYS;

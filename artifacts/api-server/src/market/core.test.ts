@@ -140,6 +140,21 @@ test("sold comp freshness distinguishes missing, recent, and stale evidence", { 
       "stale",
     );
     assert.deepEqual(
+      summarizeSoldCompsFreshness([
+        comp("2026-09-20T00:00:00.000Z"),
+        comp("2026-08-01T00:00:00.000Z"),
+      ], now),
+      {
+        status: "stale",
+        recent_window_days: SOLD_COMP_RECENCY_DAYS,
+        recent_count: 1,
+        stale_count: 1,
+        missing_count: 0,
+        latest_sold_at: "2026-09-20T00:00:00.000Z",
+        oldest_sold_at: "2026-08-01T00:00:00.000Z",
+      },
+    );
+    assert.deepEqual(
       summarizeSoldCompsFreshness([comp("not-a-date")], now),
       {
         status: "missing",
