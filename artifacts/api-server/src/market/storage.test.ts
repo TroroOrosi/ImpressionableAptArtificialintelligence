@@ -1,69 +1,107 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { getStoredPriceHistory, getStoredSoldComps, loadStoredProviderHealth, persistObservations, persistProviderHealth, persistSoldComps } from "./storage";
-import type { Observation } from "./core";
+import { dirname, join } from "node:path";
 
-test("market records survive a fresh database read with normalized values", { skip: !process.env.DATABASE_URL }, async () => {
-  const [{ db, marketObservations, marketSoldComps, marketSourceHealth }, { eq }] = await Promise.all([
-    import("@workspace/db"),
-    import("drizzle-orm"),
-  ]);
-  const marker = `task2-persistence-${process.pid}-${Date.now()}`;
-  const observation: Observation = {
-    id: `${marker}-observation`,
-    title: `Task 2 persistence ${marker}`,
-    value: 15000,
-    currency: "JPY",
-    source: "task2-test",
-    source_tier: 1,
-    fetched_at: new Date().toISOString(),
-    freshness_seconds: 0,
-    remaining_seconds: null,
-    confidence: 0.9,
-    url: "https://example.com/task2-observation",
-    evidence_hash: `${marker}-evidence`,
-    identity: { model: marker },
-    actionable: true,
-  };
+const fixtureScript = fileURLToPath(new URL("./persistence-fixture.ts", import.meta.url));
+const apiServerRoot = join(dirname(fixtureScript), "../..");
+
+function quoteIdentifier(value: string) {
+  return `"${value.replaceAll(`"`, `""`)}"`;
+}
+
+function databaseUrlFor(databaseName: string) {
+  const url = new URL(process.env.DATABASE_URL || "");
+  url.pathname = `/${databaseName}`;
+  return url.toString();
+}
+
+function runFixture(mode: "setup" | "write" | "read", databaseUrl: string, marker: string) {
+  return execFileSync(
+    process.execPath,
+    ["--import", "tsx", fixtureScript, mode],
+    {
+      cwd: apiServerRoot,
+      env: {
+        ...process.env,
+        DATABASE_URL: databaseUrl,
+        MARKET_TEST_MARKER: marker,
+      },
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  ).trim();
+}
+
+test("market records survive a fresh storage and core instance", {
+  concurrency: false,
+  skip: !process.env.DATABASE_URL,
+}, async () => {
+  const { pool } = await import("@workspace/db");
+  const marker = `market_restart_${process.pid}_${Date.now()}_${randomUUID().replaceAll("-", "").slice(0, 8)}`;
+  const databaseName = `${marker}_db`;
+  let databaseCreated = false;
 
   try {
-    await persistObservations([observation]);
-    assert.equal(await persistSoldComps([{
-      query: marker,
-      title: `Sold ${marker}`,
-      soldPrice: "100",
-      currency: "USD",
-      soldAt: "2026-09-19T10:00:00.000Z",
-      source: "task2-market",
-      condition: "brand new",
-      url: "https://example.com/task2-sold",
-      fees: { percent: 10 },
-      shipping: 5,
-      providerItemId: marker,
-    }]), 1);
-    await persistProviderHealth(marker, {
-      ok: false,
-      latencyMs: 123,
-      observations: 0,
-      error: "task2_test_failure",
+    await pool.query(`CREATE DATABASE ${quoteIdentifier(databaseName)}`);
+    databaseCreated = true;
+    const databaseUrl = databaseUrlFor(databaseName);
+
+    runFixture("setup", databaseUrl, marker);
+    runFixture("write", databaseUrl, marker);
+    const persisted = JSON.parse(runFixture("read", databaseUrl, marker)) as {
+      history: Array<Record<string, unknown>>;
+      soldComps: Array<Record<string, unknown>>;
+      persistedHealth: Record<string, unknown> | undefined;
+      coreHealth: Record<string, unknown>;
+    };
+
+    assert.equal(persisted.history.length, 1);
+    assert.equal(persisted.history[0]?.id, `${marker}-observation`);
+    assert.equal(persisted.history[0]?.currency, "JPY");
+    assert.equal(persisted.history[0]?.freshness_seconds, 42);
+    assert.deepEqual(persisted.history[0]?.identity, {
+      model: marker,
+      accessories: ["strap"],
     });
 
-    const [history, soldComps, health] = await Promise.all([
-      getStoredPriceHistory(marker),
-      getStoredSoldComps(marker),
-      loadStoredProviderHealth(),
-    ]);
-    assert.equal(history[0]?.evidence_hash, observation.evidence_hash);
-    assert.equal(soldComps[0]?.normalized_price, 12750);
-    assert.equal(soldComps[0]?.condition, "new");
-    assert.equal(health.get(marker)?.lastError, "task2_test_failure");
-    assert.equal(health.get(marker)?.lastLatencyMs, 123);
-    assert.equal(health.get(marker)?.consecutiveFailures, 1);
+    assert.equal(persisted.soldComps.length, 1);
+    assert.equal(persisted.soldComps[0]?.sold_price, 100);
+    assert.equal(persisted.soldComps[0]?.currency, "USD");
+    assert.equal(persisted.soldComps[0]?.normalized_price, 12750);
+    assert.equal(persisted.soldComps[0]?.condition, "new");
+    assert.deepEqual(persisted.soldComps[0]?.identity, {
+      model: marker,
+      accessories: ["strap"],
+    });
+
+    assert.deepEqual(persisted.persistedHealth, {
+      attempts: 1,
+      successes: 0,
+      failures: 1,
+      observations: 2,
+      lastSuccessAt: null,
+      lastError: "timeout",
+      lastLatencyMs: 123,
+      consecutiveFailures: 1,
+    });
+    assert.deepEqual(persisted.coreHealth, {
+      attempts: 1,
+      successes: 0,
+      failures: 1,
+      observations: 2,
+      lastSuccessAt: null,
+      lastError: "timeout",
+      lastErrorType: "timeout",
+      lastLatencyMs: 123,
+      consecutiveFailures: 1,
+    });
   } finally {
-    await Promise.all([
-      db.delete(marketObservations).where(eq(marketObservations.id, observation.id)),
-      db.delete(marketSoldComps).where(eq(marketSoldComps.queryKey, marker)),
-      db.delete(marketSourceHealth).where(eq(marketSourceHealth.providerId, marker)),
-    ]);
+    if (databaseCreated) {
+      await pool.query(`DROP DATABASE ${quoteIdentifier(databaseName)} WITH (FORCE)`);
+    }
+    await pool.end();
   }
 });
