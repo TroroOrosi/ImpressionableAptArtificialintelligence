@@ -1,5 +1,8 @@
+import { spawn } from "node:child_process";
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createServer } from "node:net";
+import { fileURLToPath } from "node:url";
 import {
   auctionFreshnessLimit,
   compareIdentity,
@@ -14,6 +17,121 @@ import {
   SOLD_COMP_RECENCY_DAYS,
   verifyEvidence,
 } from "./core";
+
+const apiEntrypoint = fileURLToPath(new URL("../index.ts", import.meta.url));
+const apiServerRoot = fileURLToPath(new URL("../../", import.meta.url));
+
+async function findAvailablePort() {
+  const server = createServer();
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    server.close();
+    throw new Error("Could not determine the API test port.");
+  }
+
+  const port = address.port;
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  });
+  return port;
+}
+
+async function stopChildProcess(child: ReturnType<typeof spawn>) {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+
+  const exit = new Promise<void>((resolve) => {
+    child.once("exit", () => resolve());
+  });
+  child.kill("SIGTERM");
+
+  const exited = await Promise.race([
+    exit.then(() => true),
+    new Promise<false>((resolve) => setTimeout(() => resolve(false), 1_000)),
+  ]);
+  if (!exited) {
+    child.kill("SIGKILL");
+    await exit;
+  }
+}
+
+async function runApiEntrypoint(soldCompRecencyDays?: string) {
+  const port = await findAvailablePort();
+  const childEnv: NodeJS.ProcessEnv = {
+    PATH: process.env.PATH,
+    HOME: process.env.HOME,
+    NODE_ENV: "production",
+    LOG_LEVEL: "info",
+    PORT: String(port),
+    DATABASE_URL: "",
+  };
+  if (soldCompRecencyDays !== undefined) {
+    childEnv.SOLD_COMP_RECENCY_DAYS = soldCompRecencyDays;
+  }
+
+  const child = spawn(process.execPath, ["--import", "tsx", apiEntrypoint], {
+    cwd: apiServerRoot,
+    env: childEnv,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (!child.stdout || !child.stderr) {
+    await stopChildProcess(child);
+    throw new Error("Could not capture API startup output.");
+  }
+
+  let output = "";
+  const appendOutput = (chunk: Buffer | string) => {
+    output += chunk.toString();
+  };
+  child.stdout.on("data", appendOutput);
+  child.stderr.on("data", appendOutput);
+
+  const started = new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error(`API did not start within the timeout.\n${output}`));
+    }, 5_000);
+    const checkOutput = () => {
+      if (output.includes('"msg":"Server listening"')) {
+        clearTimeout(timeout);
+        resolve();
+      }
+    };
+    const handleExit = (code: number | null, signal: NodeJS.Signals | null) => {
+      clearTimeout(timeout);
+      reject(new Error(`API exited before startup (code=${code}, signal=${signal}).\n${output}`));
+    };
+    child.stdout.on("data", checkOutput);
+    child.once("exit", handleExit);
+    child.once("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+  });
+
+  try {
+    await started;
+  } finally {
+    await stopChildProcess(child);
+  }
+  return output;
+}
+
+function recencyWarningMessages(output: string) {
+  return output.split(/\r?\n/).flatMap((line) => {
+    try {
+      const record = JSON.parse(line) as { msg?: unknown };
+      return typeof record.msg === "string" && record.msg.includes("SOLD_COMP_RECENCY_DAYS was rejected")
+        ? [record.msg]
+        : [];
+    } catch {
+      return line.includes("SOLD_COMP_RECENCY_DAYS was rejected") ? [line] : [];
+    }
+  });
+}
 
 test("provider routing preserves official-first priority", () => {
   const sorted = [...providerRegistry].sort((a, b) => a.tier - b.tier);
@@ -262,6 +380,20 @@ test("sold comp freshness warning identifies the safe policy without echoing the
     if (savedRecencyDays === undefined) delete process.env.SOLD_COMP_RECENCY_DAYS;
     else process.env.SOLD_COMP_RECENCY_DAYS = savedRecencyDays;
   }
+});
+
+test("API startup warns once for invalid freshness settings and stays quiet otherwise", async () => {
+  const expectedWarning = "SOLD_COMP_RECENCY_DAYS was rejected; using the safe default of 30 days. Accepted values are whole days from 1 through 365.";
+
+  for (const invalidValue of ["0", "366", "14.5", "not-a-number"]) {
+    const output = await runApiEntrypoint(invalidValue);
+    const warningMessages = recencyWarningMessages(output);
+    assert.equal(warningMessages.length, 1, `expected one recency warning for ${invalidValue}`);
+    assert.equal(warningMessages[0], expectedWarning);
+  }
+
+  assert.equal(recencyWarningMessages(await runApiEntrypoint()).length, 0);
+  assert.equal(recencyWarningMessages(await runApiEntrypoint("14")).length, 0);
 });
 
 test("health degrades after consecutive failures", () => {
