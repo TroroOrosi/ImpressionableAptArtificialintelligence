@@ -10,12 +10,15 @@ import {
   buildSoldCompsResponse,
   getSoldCompRecencyDays,
   getSoldCompRecencyDaysForMarket,
+  getSoldCompRecencyMarketOverrideWarnings,
   getSoldCompRecencyWarning,
   isActionable,
   providerRegistry,
   summarizeSoldCompsFreshness,
   SOLD_COMP_RECENCY_DAYS,
   SOLD_COMP_RECENCY_MAX_DAYS,
+  SOLD_COMP_RECENCY_MARKET_SETTING,
+  SOLD_COMP_RECENCY_MARKET_WARNING_CODE,
   SOLD_COMP_RECENCY_MIN_DAYS,
   SOLD_COMP_RECENCY_SETTING,
   SOLD_COMP_RECENCY_WARNING_CODE,
@@ -65,7 +68,11 @@ async function stopChildProcess(child: ReturnType<typeof spawn>) {
   }
 }
 
-async function runApiProcess(entrypointArgs: string[], soldCompRecencyDays?: string) {
+async function runApiProcess(
+  entrypointArgs: string[],
+  soldCompRecencyDays?: string,
+  soldCompRecencyMarketOverrides?: string,
+) {
   const port = await findAvailablePort();
   const childEnv: NodeJS.ProcessEnv = {
     PATH: process.env.PATH,
@@ -77,6 +84,9 @@ async function runApiProcess(entrypointArgs: string[], soldCompRecencyDays?: str
   };
   if (soldCompRecencyDays !== undefined) {
     childEnv.SOLD_COMP_RECENCY_DAYS = soldCompRecencyDays;
+  }
+  if (soldCompRecencyMarketOverrides !== undefined) {
+    childEnv.SOLD_COMP_RECENCY_DAYS_BY_MARKET = soldCompRecencyMarketOverrides;
   }
 
   const child = spawn(process.execPath, entrypointArgs, {
@@ -126,8 +136,15 @@ async function runApiProcess(entrypointArgs: string[], soldCompRecencyDays?: str
   return output;
 }
 
-async function runApiEntrypoint(soldCompRecencyDays?: string) {
-  return runApiProcess(["--import", "tsx", apiEntrypoint], soldCompRecencyDays);
+async function runApiEntrypoint(
+  soldCompRecencyDays?: string,
+  soldCompRecencyMarketOverrides?: string,
+) {
+  return runApiProcess(
+    ["--import", "tsx", apiEntrypoint],
+    soldCompRecencyDays,
+    soldCompRecencyMarketOverrides,
+  );
 }
 
 async function runBundledApiEntrypoint(soldCompRecencyDays?: string) {
@@ -181,6 +198,37 @@ function recencyWarningRecords(output: string) {
             code: record.code,
             setting: record.setting,
             safe_default_days: record.safe_default_days,
+            accepted_min_days: record.accepted_min_days,
+            accepted_max_days: record.accepted_max_days,
+            msg: record.msg,
+          }]
+        : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
+function marketRecencyWarningRecords(output: string) {
+  return output.split(/\r?\n/).flatMap((line) => {
+    try {
+      const record = JSON.parse(line) as {
+        level?: unknown;
+        msg?: unknown;
+        code?: unknown;
+        setting?: unknown;
+        market_key?: unknown;
+        fallback_days?: unknown;
+        accepted_min_days?: unknown;
+        accepted_max_days?: unknown;
+      };
+      return record.code === SOLD_COMP_RECENCY_MARKET_WARNING_CODE
+        ? [{
+            level: record.level,
+            code: record.code,
+            setting: record.setting,
+            market_key: record.market_key,
+            fallback_days: record.fallback_days,
             accepted_min_days: record.accepted_min_days,
             accepted_max_days: record.accepted_max_days,
             msg: record.msg,
@@ -422,6 +470,49 @@ test("sold comp freshness applies valid market overrides before the global setti
   }
 });
 
+test("sold comp freshness warns for invalid market keys and day values without echoing values", { concurrency: false }, () => {
+  const savedRecencyDays = process.env.SOLD_COMP_RECENCY_DAYS;
+  const savedMarketOverrides = process.env.SOLD_COMP_RECENCY_DAYS_BY_MARKET;
+  try {
+    process.env.SOLD_COMP_RECENCY_DAYS = "45";
+    const validOverrides = JSON.stringify({ ebay_us: 14, "slow-market": "7" });
+    assert.deepEqual(getSoldCompRecencyMarketOverrideWarnings("45", validOverrides), []);
+
+    const invalidDays = "do-not-echo";
+    const warnings = getSoldCompRecencyMarketOverrideWarnings("45", JSON.stringify({
+      ebay_us: invalidDays,
+      "bad market": 14,
+      valid_market: 7,
+    }));
+    assert.deepEqual(warnings, [
+      {
+        code: SOLD_COMP_RECENCY_MARKET_WARNING_CODE,
+        setting: SOLD_COMP_RECENCY_MARKET_SETTING,
+        market_key: "ebay_us",
+        fallback_days: 45,
+        accepted_min_days: SOLD_COMP_RECENCY_MIN_DAYS,
+        accepted_max_days: SOLD_COMP_RECENCY_MAX_DAYS,
+        message: 'SOLD_COMP_RECENCY_DAYS_BY_MARKET entry for market key "ebay_us" was rejected; using the global freshness policy of 45 days. Accepted values are whole days from 1 through 365, and market keys must contain only letters, numbers, underscores, periods, or hyphens.',
+      },
+      {
+        code: SOLD_COMP_RECENCY_MARKET_WARNING_CODE,
+        setting: SOLD_COMP_RECENCY_MARKET_SETTING,
+        market_key: "bad market",
+        fallback_days: 45,
+        accepted_min_days: SOLD_COMP_RECENCY_MIN_DAYS,
+        accepted_max_days: SOLD_COMP_RECENCY_MAX_DAYS,
+        message: 'SOLD_COMP_RECENCY_DAYS_BY_MARKET entry for market key "bad market" was rejected; using the global freshness policy of 45 days. Accepted values are whole days from 1 through 365, and market keys must contain only letters, numbers, underscores, periods, or hyphens.',
+      },
+    ]);
+    assert.ok(warnings.every((warning) => !warning.message.includes(invalidDays)));
+  } finally {
+    if (savedRecencyDays === undefined) delete process.env.SOLD_COMP_RECENCY_DAYS;
+    else process.env.SOLD_COMP_RECENCY_DAYS = savedRecencyDays;
+    if (savedMarketOverrides === undefined) delete process.env.SOLD_COMP_RECENCY_DAYS_BY_MARKET;
+    else process.env.SOLD_COMP_RECENCY_DAYS_BY_MARKET = savedMarketOverrides;
+  }
+});
+
 test("sold comp freshness warning identifies the safe policy without echoing the setting", { concurrency: false }, () => {
   const savedRecencyDays = process.env.SOLD_COMP_RECENCY_DAYS;
   try {
@@ -468,6 +559,56 @@ test("API startup warns once for invalid freshness settings and stays quiet othe
 
   assert.equal(recencyWarningRecords(await runApiEntrypoint()).length, 0);
   assert.equal(recencyWarningRecords(await runApiEntrypoint("14")).length, 0);
+});
+
+test("API startup warns for invalid market overrides and stays quiet for valid ones", { concurrency: false }, async () => {
+  const invalidMarketOverrides = JSON.stringify({
+    EBAY_US: 7,
+    invalid_days: "do-not-echo",
+    "bad market": 14,
+  });
+  const invalidOutput = await runApiEntrypoint("45", invalidMarketOverrides);
+  const invalidWarnings = marketRecencyWarningRecords(invalidOutput);
+  assert.equal(invalidWarnings.length, 2);
+  assert.deepEqual(invalidWarnings.map((warning) => ({
+    level: warning.level,
+    code: warning.code,
+    setting: warning.setting,
+    market_key: warning.market_key,
+    fallback_days: warning.fallback_days,
+    accepted_min_days: warning.accepted_min_days,
+    accepted_max_days: warning.accepted_max_days,
+  })), [
+    {
+      level: 40,
+      code: SOLD_COMP_RECENCY_MARKET_WARNING_CODE,
+      setting: SOLD_COMP_RECENCY_MARKET_SETTING,
+      market_key: "invalid_days",
+      fallback_days: 45,
+      accepted_min_days: SOLD_COMP_RECENCY_MIN_DAYS,
+      accepted_max_days: SOLD_COMP_RECENCY_MAX_DAYS,
+    },
+    {
+      level: 40,
+      code: SOLD_COMP_RECENCY_MARKET_WARNING_CODE,
+      setting: SOLD_COMP_RECENCY_MARKET_SETTING,
+      market_key: "bad market",
+      fallback_days: 45,
+      accepted_min_days: SOLD_COMP_RECENCY_MIN_DAYS,
+      accepted_max_days: SOLD_COMP_RECENCY_MAX_DAYS,
+    },
+  ]);
+  assert.ok(invalidWarnings.every((warning) => warning.msg ===
+    'SOLD_COMP_RECENCY_DAYS_BY_MARKET entry for market key "invalid_days" was rejected; using the global freshness policy of 45 days. Accepted values are whole days from 1 through 365, and market keys must contain only letters, numbers, underscores, periods, or hyphens.'
+    || warning.msg ===
+    'SOLD_COMP_RECENCY_DAYS_BY_MARKET entry for market key "bad market" was rejected; using the global freshness policy of 45 days. Accepted values are whole days from 1 through 365, and market keys must contain only letters, numbers, underscores, periods, or hyphens.'));
+  assert.ok(!invalidOutput.includes("do-not-echo"));
+
+  assert.equal(
+    marketRecencyWarningRecords(await runApiEntrypoint("45", JSON.stringify({ EBAY_US: 7 }))).length,
+    0,
+  );
+  assert.equal(marketRecencyWarningRecords(await runApiEntrypoint("45")).length, 0);
 });
 
 test("bundled API startup matches source freshness warning behavior", { concurrency: false }, async () => {

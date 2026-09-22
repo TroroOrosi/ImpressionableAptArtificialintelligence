@@ -348,11 +348,23 @@ export const SOLD_COMP_RECENCY_MIN_DAYS = 1;
 export const SOLD_COMP_RECENCY_MAX_DAYS = 365;
 export const SOLD_COMP_RECENCY_WARNING_CODE = "invalid_sold_comp_recency_days";
 export const SOLD_COMP_RECENCY_SETTING = "SOLD_COMP_RECENCY_DAYS";
+export const SOLD_COMP_RECENCY_MARKET_WARNING_CODE = "invalid_sold_comp_recency_days_by_market";
+export const SOLD_COMP_RECENCY_MARKET_SETTING = "SOLD_COMP_RECENCY_DAYS_BY_MARKET";
 
 export type SoldCompRecencyWarning = {
   code: typeof SOLD_COMP_RECENCY_WARNING_CODE;
   setting: typeof SOLD_COMP_RECENCY_SETTING;
   safe_default_days: number;
+  accepted_min_days: number;
+  accepted_max_days: number;
+  message: string;
+};
+
+export type SoldCompRecencyMarketOverrideWarning = {
+  code: typeof SOLD_COMP_RECENCY_MARKET_WARNING_CODE;
+  setting: typeof SOLD_COMP_RECENCY_MARKET_SETTING;
+  market_key: string;
+  fallback_days: number;
   accepted_min_days: number;
   accepted_max_days: number;
   message: string;
@@ -392,24 +404,38 @@ function parseSoldCompRecencyValue(rawValue: unknown) {
   return typeof rawValue === "string" ? parseSoldCompRecencyDays(rawValue) : null;
 }
 
-function parseSoldCompRecencyOverrides(rawValue = process.env.SOLD_COMP_RECENCY_DAYS_BY_MARKET) {
-  if (!rawValue?.trim()) return new Map<string, number>();
+type SoldCompRecencyOverrideEntry = {
+  rawMarket: string;
+  market: string | null;
+  days: number | null;
+};
+
+function parseSoldCompRecencyOverrideEntries(
+  rawValue = process.env.SOLD_COMP_RECENCY_DAYS_BY_MARKET,
+) {
+  if (!rawValue?.trim()) return [] satisfies SoldCompRecencyOverrideEntry[];
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(rawValue);
   } catch {
-    return new Map<string, number>();
+    return [] satisfies SoldCompRecencyOverrideEntry[];
   }
 
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return new Map<string, number>();
+    return [] satisfies SoldCompRecencyOverrideEntry[];
   }
 
+  return Object.entries(parsed).map(([rawMarket, rawDays]) => ({
+    rawMarket,
+    market: normalizeSoldCompMarket(rawMarket),
+    days: parseSoldCompRecencyValue(rawDays),
+  }));
+}
+
+function parseSoldCompRecencyOverrides(rawValue = process.env.SOLD_COMP_RECENCY_DAYS_BY_MARKET) {
   const overrides = new Map<string, number>();
-  for (const [rawMarket, rawDays] of Object.entries(parsed)) {
-    const market = normalizeSoldCompMarket(rawMarket);
-    const days = parseSoldCompRecencyValue(rawDays);
+  for (const { market, days } of parseSoldCompRecencyOverrideEntries(rawValue)) {
     if (market && days != null) overrides.set(market, days);
   }
   return overrides;
@@ -425,6 +451,36 @@ export function getSoldCompRecencyDaysForMarket(
     ? parseSoldCompRecencyOverrides(rawMarketOverrides).get(normalizedMarket)
     : undefined;
   return marketOverride ?? getSoldCompRecencyDays(rawGlobalValue);
+}
+
+function safeMarketKeyForWarning(rawMarket: string) {
+  const printable = [...rawMarket]
+    .map((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      return codePoint >= 0x20 && codePoint <= 0x7e ? character : "?";
+    })
+    .join("")
+    .trim();
+  if (!printable) return "<empty>";
+  return printable.length <= 64 ? printable : `${printable.slice(0, 61)}...`;
+}
+
+export function getSoldCompRecencyMarketOverrideWarnings(
+  rawGlobalValue = process.env.SOLD_COMP_RECENCY_DAYS,
+  rawMarketOverrides = process.env.SOLD_COMP_RECENCY_DAYS_BY_MARKET,
+) {
+  const fallbackDays = getSoldCompRecencyDays(rawGlobalValue);
+  return parseSoldCompRecencyOverrideEntries(rawMarketOverrides)
+    .filter(({ market, days }) => market == null || days == null)
+    .map(({ rawMarket }) => ({
+      code: SOLD_COMP_RECENCY_MARKET_WARNING_CODE,
+      setting: SOLD_COMP_RECENCY_MARKET_SETTING,
+      market_key: safeMarketKeyForWarning(rawMarket),
+      fallback_days: fallbackDays,
+      accepted_min_days: SOLD_COMP_RECENCY_MIN_DAYS,
+      accepted_max_days: SOLD_COMP_RECENCY_MAX_DAYS,
+      message: `${SOLD_COMP_RECENCY_MARKET_SETTING} entry for market key ${JSON.stringify(safeMarketKeyForWarning(rawMarket))} was rejected; using the global freshness policy of ${fallbackDays} days. Accepted values are whole days from ${SOLD_COMP_RECENCY_MIN_DAYS} through ${SOLD_COMP_RECENCY_MAX_DAYS}, and market keys must contain only letters, numbers, underscores, periods, or hyphens.`,
+    } satisfies SoldCompRecencyMarketOverrideWarning));
 }
 
 export function getSoldCompRecencyWarning(rawValue = process.env.SOLD_COMP_RECENCY_DAYS) {

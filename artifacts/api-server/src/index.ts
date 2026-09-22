@@ -1,6 +1,9 @@
 import app from "./app";
 import { logger } from "./lib/logger";
-import { getSoldCompRecencyWarning } from "./market/core";
+import {
+  getSoldCompRecencyMarketOverrideWarnings,
+  getSoldCompRecencyWarning,
+} from "./market/core";
 import { cleanupMarketHistory } from "./market/storage";
 
 const rawPort = process.env["PORT"];
@@ -37,6 +40,11 @@ if (Number.isNaN(port) || port <= 0) {
 const soldCompRecencyWarning = getSoldCompRecencyWarning();
 if (soldCompRecencyWarning) {
   const { message, ...warningFields } = soldCompRecencyWarning;
+  logger.warn(warningFields, message);
+}
+
+for (const warning of getSoldCompRecencyMarketOverrideWarnings()) {
+  const { message, ...warningFields } = warning;
   logger.warn(warningFields, message);
 }
 
