@@ -36,7 +36,8 @@ if (Number.isNaN(port) || port <= 0) {
 
 const soldCompRecencyWarning = getSoldCompRecencyWarning();
 if (soldCompRecencyWarning) {
-  logger.warn(soldCompRecencyWarning);
+  const { message, ...warningFields } = soldCompRecencyWarning;
+  logger.warn(warningFields, message);
 }
 
 app.listen(port, (err) => {

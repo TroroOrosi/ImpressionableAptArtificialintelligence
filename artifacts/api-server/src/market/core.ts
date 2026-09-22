@@ -346,6 +346,17 @@ function removePriceOutliers(comps: SoldCompRecord[]) {
 export const SOLD_COMP_RECENCY_DAYS = 30;
 export const SOLD_COMP_RECENCY_MIN_DAYS = 1;
 export const SOLD_COMP_RECENCY_MAX_DAYS = 365;
+export const SOLD_COMP_RECENCY_WARNING_CODE = "invalid_sold_comp_recency_days";
+export const SOLD_COMP_RECENCY_SETTING = "SOLD_COMP_RECENCY_DAYS";
+
+export type SoldCompRecencyWarning = {
+  code: typeof SOLD_COMP_RECENCY_WARNING_CODE;
+  setting: typeof SOLD_COMP_RECENCY_SETTING;
+  safe_default_days: number;
+  accepted_min_days: number;
+  accepted_max_days: number;
+  message: string;
+};
 
 function parseSoldCompRecencyDays(rawValue: string | undefined) {
   const value = rawValue?.trim();
@@ -419,7 +430,14 @@ export function getSoldCompRecencyDaysForMarket(
 export function getSoldCompRecencyWarning(rawValue = process.env.SOLD_COMP_RECENCY_DAYS) {
   if (rawValue === undefined || parseSoldCompRecencyDays(rawValue) != null) return null;
 
-  return `SOLD_COMP_RECENCY_DAYS was rejected; using the safe default of ${SOLD_COMP_RECENCY_DAYS} days. Accepted values are whole days from ${SOLD_COMP_RECENCY_MIN_DAYS} through ${SOLD_COMP_RECENCY_MAX_DAYS}.`;
+  return {
+    code: SOLD_COMP_RECENCY_WARNING_CODE,
+    setting: SOLD_COMP_RECENCY_SETTING,
+    safe_default_days: SOLD_COMP_RECENCY_DAYS,
+    accepted_min_days: SOLD_COMP_RECENCY_MIN_DAYS,
+    accepted_max_days: SOLD_COMP_RECENCY_MAX_DAYS,
+    message: `${SOLD_COMP_RECENCY_SETTING} was rejected; using the safe default of ${SOLD_COMP_RECENCY_DAYS} days. Accepted values are whole days from ${SOLD_COMP_RECENCY_MIN_DAYS} through ${SOLD_COMP_RECENCY_MAX_DAYS}.`,
+  } satisfies SoldCompRecencyWarning;
 }
 
 const millisecondsPerDay = 24 * 60 * 60 * 1_000;

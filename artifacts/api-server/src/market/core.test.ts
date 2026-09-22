@@ -15,6 +15,10 @@ import {
   providerRegistry,
   summarizeSoldCompsFreshness,
   SOLD_COMP_RECENCY_DAYS,
+  SOLD_COMP_RECENCY_MAX_DAYS,
+  SOLD_COMP_RECENCY_MIN_DAYS,
+  SOLD_COMP_RECENCY_SETTING,
+  SOLD_COMP_RECENCY_WARNING_CODE,
   verifyEvidence,
 } from "./core";
 
@@ -120,15 +124,31 @@ async function runApiEntrypoint(soldCompRecencyDays?: string) {
   return output;
 }
 
-function recencyWarningMessages(output: string) {
+function recencyWarningRecords(output: string) {
   return output.split(/\r?\n/).flatMap((line) => {
     try {
-      const record = JSON.parse(line) as { msg?: unknown };
-      return typeof record.msg === "string" && record.msg.includes("SOLD_COMP_RECENCY_DAYS was rejected")
-        ? [record.msg]
+      const record = JSON.parse(line) as {
+        level?: unknown;
+        msg?: unknown;
+        code?: unknown;
+        setting?: unknown;
+        safe_default_days?: unknown;
+        accepted_min_days?: unknown;
+        accepted_max_days?: unknown;
+      };
+      return record.code === SOLD_COMP_RECENCY_WARNING_CODE
+        ? [{
+            level: record.level,
+            code: record.code,
+            setting: record.setting,
+            safe_default_days: record.safe_default_days,
+            accepted_min_days: record.accepted_min_days,
+            accepted_max_days: record.accepted_max_days,
+            msg: record.msg,
+          }]
         : [];
     } catch {
-      return line.includes("SOLD_COMP_RECENCY_DAYS was rejected") ? [line] : [];
+      return [];
     }
   });
 }
@@ -371,10 +391,17 @@ test("sold comp freshness warning identifies the safe policy without echoing the
     assert.equal(getSoldCompRecencyWarning("14"), null);
     assert.equal(getSoldCompRecencyWarning(" 14 "), null);
 
-    const expectedWarning = "SOLD_COMP_RECENCY_DAYS was rejected; using the safe default of 30 days. Accepted values are whole days from 1 through 365.";
+    const expectedWarning = {
+      code: SOLD_COMP_RECENCY_WARNING_CODE,
+      setting: SOLD_COMP_RECENCY_SETTING,
+      safe_default_days: SOLD_COMP_RECENCY_DAYS,
+      accepted_min_days: SOLD_COMP_RECENCY_MIN_DAYS,
+      accepted_max_days: SOLD_COMP_RECENCY_MAX_DAYS,
+      message: "SOLD_COMP_RECENCY_DAYS was rejected; using the safe default of 30 days. Accepted values are whole days from 1 through 365.",
+    };
     for (const invalid of ["", "0", "366", "14.5", "not-a-number"]) {
       const warning = getSoldCompRecencyWarning(invalid);
-      assert.equal(warning, expectedWarning);
+      assert.deepEqual(warning, expectedWarning);
     }
   } finally {
     if (savedRecencyDays === undefined) delete process.env.SOLD_COMP_RECENCY_DAYS;
@@ -387,13 +414,21 @@ test("API startup warns once for invalid freshness settings and stays quiet othe
 
   for (const invalidValue of ["0", "366", "14.5", "not-a-number"]) {
     const output = await runApiEntrypoint(invalidValue);
-    const warningMessages = recencyWarningMessages(output);
-    assert.equal(warningMessages.length, 1, `expected one recency warning for ${invalidValue}`);
-    assert.equal(warningMessages[0], expectedWarning);
+    const warningRecords = recencyWarningRecords(output);
+    assert.equal(warningRecords.length, 1, `expected one recency warning for ${invalidValue}`);
+    assert.deepEqual(warningRecords[0], {
+      level: 40,
+      code: SOLD_COMP_RECENCY_WARNING_CODE,
+      setting: SOLD_COMP_RECENCY_SETTING,
+      safe_default_days: SOLD_COMP_RECENCY_DAYS,
+      accepted_min_days: SOLD_COMP_RECENCY_MIN_DAYS,
+      accepted_max_days: SOLD_COMP_RECENCY_MAX_DAYS,
+      msg: expectedWarning,
+    });
   }
 
-  assert.equal(recencyWarningMessages(await runApiEntrypoint()).length, 0);
-  assert.equal(recencyWarningMessages(await runApiEntrypoint("14")).length, 0);
+  assert.equal(recencyWarningRecords(await runApiEntrypoint()).length, 0);
+  assert.equal(recencyWarningRecords(await runApiEntrypoint("14")).length, 0);
 });
 
 test("health degrades after consecutive failures", () => {
