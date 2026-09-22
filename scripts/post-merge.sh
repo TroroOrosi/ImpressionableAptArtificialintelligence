@@ -1,4 +1,7 @@
-#!/bin/bash
-set -e
-pnpm install --frozen-lockfile
-pnpm --filter db push
+#!/usr/bin/env bash
+set -euo pipefail
+
+export CI=true
+
+pnpm install --frozen-lockfile --prefer-offline
+pnpm --filter @workspace/db run push
