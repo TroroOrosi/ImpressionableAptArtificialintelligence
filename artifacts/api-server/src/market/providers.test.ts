@@ -47,6 +47,46 @@ function jsonResponse(payload: unknown, status = 200) {
   });
 }
 
+function ebaySoldItemFixture(overrides: Record<string, unknown> = {}) {
+  return {
+    title: "Sold camera",
+    soldPrice: { value: "100", currency: "USD" },
+    lastSoldDate: "2026-09-19T10:00:00.000Z",
+    condition: "USED",
+    itemWebUrl: "https://www.ebay.example/sold-camera",
+    itemId: "sold-camera",
+    gtin: "4900000000001",
+    brand: "Example",
+    ...overrides,
+  };
+}
+
+function ebayPriceFieldFixture() {
+  return ebaySoldItemFixture({
+    title: "Sold camera with price field",
+    soldPrice: undefined,
+    price: { amount: "125", currency: "USD" },
+    itemWebUrl: "https://www.ebay.example/sold-camera-price",
+    itemId: "sold-camera-price",
+  });
+}
+
+function ebayScalarSoldPriceFixture() {
+  return ebaySoldItemFixture({
+    title: "Sold camera with scalar sold price",
+    soldPrice: "150",
+    currency: "USD",
+    lastSoldDate: undefined,
+    transactionDate: "2026-09-17T10:00:00.000Z",
+    condition: undefined,
+    itemCondition: "NEW",
+    itemWebUrl: undefined,
+    url: "https://www.ebay.example/sold-camera-scalar",
+    itemId: undefined,
+    epid: "sold-camera-scalar",
+  });
+}
+
 test("official adapters normalize product and auction observations in priority order", { concurrency: false }, async () => {
   const savedEnv = saveProviderEnv();
   const originalFetch = globalThis.fetch;
@@ -271,22 +311,7 @@ test("official sold adapter normalizes completed marketplace sales only", { conc
         assert.equal(new Headers(init?.headers).get("x-ebay-c-marketplace-id"), "EBAY_US");
         return jsonResponse({
           itemSales: [
-            {
-              title: "Sold camera",
-              price: { value: "100", currency: "USD" },
-              lastSoldDate: "2026-09-19T10:00:00.000Z",
-              condition: "USED",
-              itemWebUrl: "https://www.ebay.example/sold-camera",
-              itemId: "sold-camera",
-              gtin: "4900000000001",
-              brand: "Example",
-            },
-            {
-              title: "Not a completed sale",
-              price: { value: "200", currency: "USD" },
-              itemWebUrl: "https://www.ebay.example/missing-date",
-              itemId: "missing-date",
-            },
+            ebaySoldItemFixture(),
           ],
         });
       }
@@ -312,6 +337,105 @@ test("official sold adapter normalizes completed marketplace sales only", { conc
         accessories: [],
       },
     });
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreProviderEnv(savedEnv);
+  }
+});
+
+test("eBay sold adapter supports the legacy price field", { concurrency: false }, async () => {
+  const savedEnv = saveProviderEnv();
+  const originalFetch = globalThis.fetch;
+  try {
+    clearProviderEnv();
+    process.env.EBAY_CLIENT_ID = "test-ebay";
+    process.env.EBAY_ACCESS_TOKEN = "test-ebay-token";
+
+    globalThis.fetch = (async (input: string | URL) => {
+      const url = String(input);
+      if (url.includes("/buy/marketplace-insights/v1_beta/item_sales/search")) {
+        return jsonResponse({ itemSales: [ebayPriceFieldFixture()] });
+      }
+      throw new Error(`Unexpected test URL: ${url}`);
+    }) as typeof fetch;
+
+    const response = await searchSoldComps("camera", 10);
+    assert.equal(response.comps.length, 1);
+    assert.equal(response.comps[0]?.sold_price, 125);
+    assert.equal(response.comps[0]?.normalized_price, 18750);
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreProviderEnv(savedEnv);
+  }
+});
+
+test("eBay sold adapter supports scalar sold prices and optional field aliases", { concurrency: false }, async () => {
+  const savedEnv = saveProviderEnv();
+  const originalFetch = globalThis.fetch;
+  try {
+    clearProviderEnv();
+    process.env.EBAY_CLIENT_ID = "test-ebay";
+    process.env.EBAY_ACCESS_TOKEN = "test-ebay-token";
+
+    globalThis.fetch = (async (input: string | URL) => {
+      const url = String(input);
+      if (url.includes("/buy/marketplace-insights/v1_beta/item_sales/search")) {
+        return jsonResponse({ itemSales: [ebayScalarSoldPriceFixture()] });
+      }
+      throw new Error(`Unexpected test URL: ${url}`);
+    }) as typeof fetch;
+
+    const response = await searchSoldComps("camera", 10);
+    assert.deepEqual(response.comps[0], {
+      title: "Sold camera with scalar sold price",
+      sold_price: 150,
+      currency: "USD",
+      sold_at: "2026-09-17T10:00:00.000Z",
+      source: "ebay",
+      normalized_price: 22500,
+      condition: "new",
+      url: "https://www.ebay.example/sold-camera-scalar",
+      identity: {
+        gtin: "4900000000001",
+        condition: "NEW",
+        brand: "Example",
+        accessories: [],
+      },
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreProviderEnv(savedEnv);
+  }
+});
+
+test("eBay sold adapter rejects records missing required sale evidence", { concurrency: false }, async () => {
+  const savedEnv = saveProviderEnv();
+  const originalFetch = globalThis.fetch;
+  try {
+    clearProviderEnv();
+    process.env.EBAY_CLIENT_ID = "test-ebay";
+    process.env.EBAY_ACCESS_TOKEN = "test-ebay-token";
+
+    let payload: unknown = { itemSales: [ebaySoldItemFixture()] };
+    globalThis.fetch = (async (input: string | URL) => {
+      const url = String(input);
+      if (url.includes("/buy/marketplace-insights/v1_beta/item_sales/search")) return jsonResponse(payload);
+      throw new Error(`Unexpected test URL: ${url}`);
+    }) as typeof fetch;
+
+    const missingEvidenceCases = [
+      ["sold timestamp", { lastSoldDate: undefined }],
+      ["price", { price: undefined, soldPrice: undefined, salePrice: undefined }],
+      ["provider identity", { itemId: undefined, legacyItemId: undefined, epid: undefined, gtin: undefined, brand: undefined }],
+      ["canonical URL", { itemWebUrl: undefined, itemUrl: undefined, url: undefined, link: undefined }],
+      ["condition", { condition: undefined, conditionDisplayName: undefined, itemCondition: undefined }],
+    ] as const;
+
+    for (const [field, overrides] of missingEvidenceCases) {
+      payload = { itemSales: [ebaySoldItemFixture(overrides)] };
+      const response = await searchSoldComps("camera", 10);
+      assert.deepEqual(response.comps, [], `a record missing its ${field} must not become a sold comp`);
+    }
   } finally {
     globalThis.fetch = originalFetch;
     restoreProviderEnv(savedEnv);

@@ -373,35 +373,45 @@ async function searchEbaySold(context: SoldSearchContext): Promise<SoldCompRecor
   const comps: SoldCompRecord[] = [];
   for (const item of recordsAt(payload, "itemSales", "sales", "items", "results")) {
     const price = asRecord(firstValue(item, "price", "soldPrice", "salePrice"));
+    const soldPrice = price
+      ? firstValue(price, "value", "amount") ?? firstValue(item, "soldPrice", "salePrice")
+      : firstValue(item, "price", "soldPrice", "salePrice");
+    const currency = price
+      ? firstValue(price, "currency", "currencyCode") ?? firstValue(item, "currency", "currencyCode", "priceCurrency")
+      : firstValue(item, "currency", "currencyCode", "priceCurrency");
     const soldAt = validTimestamp(firstValue(
       item,
       "lastSoldDate",
       "soldDate",
+      "soldAt",
+      "saleDate",
       "transactionDate",
       "itemEndDate",
       "endDate",
     ));
-    if (!soldAt) continue;
+    const title = firstString(item, "title", "itemName", "name");
+    const condition = firstString(
+      item,
+      "conditionDisplayName",
+      "condition.conditionDisplayName",
+      "condition",
+      "itemCondition",
+    );
+    const url = firstString(item, "itemWebUrl", "itemUrl", "url", "link");
+    const providerItemId = firstString(item, "itemId", "legacyItemId", "epid");
+    if (!soldAt || !title || !condition || !currency || !url || !providerItemId) continue;
 
     const comp = normalizeSoldCompRecord({
       query: context.query,
-      title: firstValue(item, "title", "itemName", "name"),
-      soldPrice: price ? firstValue(price, "value", "amount") : firstValue(item, "price", "soldPrice", "salePrice"),
-      currency: price
-        ? firstValue(price, "currency")
-        : firstValue(item, "currency", "priceCurrency") || "JPY",
+      title,
+      soldPrice,
+      currency,
       soldAt,
       source: "ebay",
-      condition: firstValue(
-        item,
-        "conditionDisplayName",
-        "condition.conditionDisplayName",
-        "condition",
-        "itemCondition",
-      ),
-      url: firstValue(item, "itemWebUrl", "itemUrl", "url", "link"),
+      condition,
+      url,
       identity: identityFrom(item),
-      providerItemId: firstValue(item, "itemId", "legacyItemId", "epid"),
+      providerItemId,
     });
     if (comp) comps.push(comp);
   }

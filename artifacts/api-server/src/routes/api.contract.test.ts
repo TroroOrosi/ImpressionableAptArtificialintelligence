@@ -126,7 +126,7 @@ test("sold comps endpoint returns structured official sales with identity", { co
       return new Response(JSON.stringify({
         itemSales: [{
           title: "Sold camera",
-          price: { value: "100", currency: "USD" },
+          soldPrice: { value: "100", currency: "USD" },
           lastSoldDate: "2026-09-19T10:00:00.000Z",
           condition: "USED",
           itemWebUrl: "https://www.ebay.example/sold-camera",
