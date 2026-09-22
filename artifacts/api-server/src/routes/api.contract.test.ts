@@ -204,6 +204,81 @@ test("sold comps endpoint returns structured official sales with identity", { co
   }
 }));
 
+test("sold comps market routing excludes unsupported providers and preserves omitted fan-out", { concurrency: false }, () => withServer(async (base) => {
+  const savedDatabaseUrl = process.env.DATABASE_URL;
+  const savedProviderEnv = new Map<string, string | undefined>([
+    ["EBAY_CLIENT_ID", process.env.EBAY_CLIENT_ID],
+    ["EBAY_ACCESS_TOKEN", process.env.EBAY_ACCESS_TOKEN],
+    ["STOCKX_API_KEY", process.env.STOCKX_API_KEY],
+    ["STOCKX_ACCESS_TOKEN", process.env.STOCKX_ACCESS_TOKEN],
+  ]);
+  const originalFetch = globalThis.fetch;
+  const calls: string[] = [];
+  try {
+    process.env.DATABASE_URL = "";
+    process.env.EBAY_CLIENT_ID = "test-ebay";
+    process.env.EBAY_ACCESS_TOKEN = "test-ebay-token";
+    process.env.STOCKX_API_KEY = "test-stockx";
+    process.env.STOCKX_ACCESS_TOKEN = "test-stockx-access-token";
+    globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.startsWith(base)) return originalFetch(input, init);
+      calls.push(url);
+      if (url.includes("/buy/marketplace-insights/v1_beta/item_sales/search")) {
+        return new Response(JSON.stringify({
+          itemSales: [{
+            title: "Market-routed camera",
+            soldPrice: { value: "100", currency: "USD" },
+            lastSoldDate: new Date(Date.now() - 2 * 24 * 60 * 60 * 1_000).toISOString(),
+            condition: "USED",
+            itemWebUrl: "https://www.ebay.example/market-routed-camera",
+            itemId: "market-routed-camera",
+          }],
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (url.includes("/v2/catalog/search")) {
+        return new Response(JSON.stringify({ products: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.includes("/v2/selling/orders/history")) {
+        return new Response(JSON.stringify({ orders: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`Unexpected test URL: ${url}`);
+    }) as typeof fetch;
+
+    const supported = await fetch(`${base}/v1/sold-comps?q=market-routing&limit=10&market=EBAY_US`);
+    assert.equal(supported.status, 200);
+    const supportedBody = await supported.json() as { comps: Array<{ source: string }> };
+    assert.deepEqual(supportedBody.comps.map((comp) => comp.source), ["ebay"]);
+    assert.equal(calls.some((url) => url.includes("stockx.com")), false);
+
+    calls.length = 0;
+    const unknown = await fetch(`${base}/v1/sold-comps?q=market-routing&limit=10&market=unknown-market`);
+    assert.equal(unknown.status, 200);
+    const unknownBody = await unknown.json() as { comps: unknown[] };
+    assert.deepEqual(unknownBody.comps, []);
+    assert.equal(calls.length, 0);
+
+    calls.length = 0;
+    const omitted = await fetch(`${base}/v1/sold-comps?q=market-routing&limit=10`);
+    assert.equal(omitted.status, 200);
+    assert.equal(calls.some((url) => url.includes("stockx.com")), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (savedDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = savedDatabaseUrl;
+    for (const [name, value] of savedProviderEnv) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+}));
+
 test("sold comps freshness reports missing evidence when no sales are available", { concurrency: false }, () => withServer(async (base) => {
   const savedDatabaseUrl = process.env.DATABASE_URL;
   const originalFetch = globalThis.fetch;

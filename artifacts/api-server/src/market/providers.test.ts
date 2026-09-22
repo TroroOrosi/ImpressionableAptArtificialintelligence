@@ -343,6 +343,23 @@ test("official sold adapter normalizes completed marketplace sales only", { conc
   }
 });
 
+test("sold provider routing matches supported, unknown, and omitted markets", { concurrency: false }, () => {
+  const savedEnv = saveProviderEnv();
+  try {
+    clearProviderEnv();
+    process.env.EBAY_CLIENT_ID = "test-ebay";
+    process.env.EBAY_ACCESS_TOKEN = "test-ebay-token";
+    process.env.STOCKX_API_KEY = "test-stockx";
+    process.env.STOCKX_ACCESS_TOKEN = "test-stockx-access-token";
+
+    assert.deepEqual(availableSoldProviderIds(), ["ebay", "stockx"]);
+    assert.deepEqual(availableSoldProviderIds("ebay_us"), ["ebay"]);
+    assert.deepEqual(availableSoldProviderIds("unknown-market"), []);
+  } finally {
+    restoreProviderEnv(savedEnv);
+  }
+});
+
 test("eBay sold adapter supports the legacy price field", { concurrency: false }, async () => {
   const savedEnv = saveProviderEnv();
   const originalFetch = globalThis.fetch;

@@ -3,6 +3,7 @@ import {
   ensureProviderHealthLoaded,
   getProviderHealth,
   isProviderConfigured,
+  normalizeSoldCompMarket,
   normalizeDiscovery,
   normalizeObservation,
   providerFailureTypeFromError,
@@ -38,6 +39,7 @@ type SoldSearchContext = {
 };
 
 type SoldAdapter = {
+  markets: readonly string[];
   search: (context: SoldSearchContext) => Promise<SoldCompRecord[]>;
 };
 
@@ -910,8 +912,9 @@ const adapters: Record<string, SearchAdapter> = {
 };
 
 const soldAdapters: Record<string, SoldAdapter> = {
-  ebay: { search: searchEbaySold },
-  stockx: { search: searchStockXSold },
+  ebay: { markets: ["EBAY_US"], search: searchEbaySold },
+  // StockX sales do not expose a selectable market in the current adapter.
+  stockx: { markets: [], search: searchStockXSold },
 };
 
 function configuredProvider(providerId: string) {
@@ -935,9 +938,31 @@ export function availableProviderIds(mode?: MarketMode) {
     .map((provider) => provider.id);
 }
 
-export function availableSoldProviderIds() {
+function soldProviderSupportsMarket(providerId: string, market: unknown) {
+  const providers = soldCompProviderIdsForMarket(market);
+  return providers === undefined || providers.includes(providerId);
+}
+
+export function soldCompProviderIdsForMarket(market?: unknown) {
+  if (market === undefined) return undefined;
+  const normalizedMarket = normalizeSoldCompMarket(market);
+  if (!normalizedMarket) return [];
+  return Object.entries(soldAdapters)
+    .filter(([, adapter]) => adapter.markets.includes(normalizedMarket))
+    .map(([providerId]) => providerId);
+}
+
+export function soldCompProviderMatchesMarket(providerId: string, market?: unknown) {
+  return soldProviderSupportsMarket(providerId.trim().toLowerCase(), market);
+}
+
+export function availableSoldProviderIds(market?: unknown) {
   return providerRegistry
-    .filter((provider) => configuredProvider(provider.id) && hasSoldCompsAdapter(provider.id))
+    .filter((provider) => (
+      configuredProvider(provider.id)
+      && hasSoldCompsAdapter(provider.id)
+      && soldProviderSupportsMarket(provider.id, market)
+    ))
     .sort((a, b) => a.tier - b.tier)
     .map((provider) => provider.id);
 }
@@ -986,13 +1011,17 @@ export type SoldCompsSearchResponse = {
   providers_queried: string[];
 };
 
-export async function searchSoldComps(query: string, limit = 20): Promise<SoldCompsSearchResponse> {
+export async function searchSoldComps(
+  query: string,
+  limit = 20,
+  market?: unknown,
+): Promise<SoldCompsSearchResponse> {
   const normalizedQuery = query.trim();
   const normalizedLimit = Math.max(1, Math.min(50, Math.floor(limit) || 20));
   const comps: SoldCompRecord[] = [];
   const providersQueried: string[] = [];
 
-  for (const providerId of availableSoldProviderIds()) {
+  for (const providerId of availableSoldProviderIds(market)) {
     const adapter = soldAdapters[providerId];
     if (!adapter) continue;
     providersQueried.push(providerId);

@@ -15,6 +15,8 @@ import {
   hasSoldCompsAdapter,
   searchMarket,
   searchSoldComps,
+  soldCompProviderIdsForMarket,
+  soldCompProviderMatchesMarket,
   sourceHealth,
 } from "../market/providers";
 import {
@@ -157,7 +159,7 @@ async function soldCompsRoute(queryValue: unknown, limitValue: unknown, marketVa
   const query = queryFrom(queryValue);
   const limit = limitFrom(limitValue);
   const market = normalizeSoldCompMarket(marketValue);
-  const live = await searchSoldComps(query, limit);
+  const live = await searchSoldComps(query, limit, marketValue);
   let writeStatus: MarketPersistenceStatus = "available";
   if (live.comps.length) {
     const persisted = await persistSoldComps(live.comps.map((comp) => ({
@@ -174,9 +176,12 @@ async function soldCompsRoute(queryValue: unknown, limitValue: unknown, marketVa
     writeStatus = persisted.status;
   }
 
-  const stored = await getStoredSoldComps(query, limit);
+  const stored = await getStoredSoldComps(query, limit, soldCompProviderIdsForMarket(marketValue));
   const merged = new Map<string, (typeof live.comps)[number]>();
-  for (const comp of stored.records) merged.set(soldCompKey(comp), comp);
+  const storedRecords = marketValue === undefined
+    ? stored.records
+    : stored.records.filter((comp) => soldCompProviderMatchesMarket(comp.source, marketValue));
+  for (const comp of storedRecords) merged.set(soldCompKey(comp), comp);
   for (const comp of live.comps) merged.set(soldCompKey(comp), comp);
   const comps = [...merged.values()]
     .sort((a, b) => new Date(b.sold_at).getTime() - new Date(a.sold_at).getTime())

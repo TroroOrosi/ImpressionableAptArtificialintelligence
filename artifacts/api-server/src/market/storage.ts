@@ -778,6 +778,7 @@ function soldCompSearchWhere(
 export async function getStoredSoldComps(
   query: string,
   limit = 100,
+  sources?: readonly string[],
 ): Promise<MarketStorageReadResult<SoldCompRecord>> {
   const normalizedQuery = query.trim();
   if (!normalizedQuery) return { records: [], status: "available" };
@@ -792,6 +793,9 @@ export async function getStoredSoldComps(
       .where(and(
         gte(database.marketSoldComps.soldAt, cutoff),
         soldCompSearchWhere(database.marketSoldComps, normalizedQuery),
+        ...(sources === undefined
+          ? []
+          : [sources.length ? inArray(database.marketSoldComps.source, sources) : sql`false`]),
       ))
       .orderBy(desc(database.marketSoldComps.soldAt))
       .limit(boundedHistoryLimit(limit));
