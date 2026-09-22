@@ -84,6 +84,15 @@ paths:
       parameters:
         - { name: q, in: query, required: true, schema: { type: string } }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+        - name: market
+          in: query
+          required: false
+          description: Optional market key for freshness policy selection. Set SOLD_COMP_RECENCY_DAYS_BY_MARKET to a JSON object such as {"EBAY_US":14}; a valid matching entry takes precedence over SOLD_COMP_RECENCY_DAYS, while invalid or missing entries fall back to the global setting and then the safe default of 30 days.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 64
+            pattern: '^[A-Za-z0-9][A-Za-z0-9_.-]*$'
       responses:
         "200":
           description: Verified sold comparisons from configured supported official marketplaces
@@ -297,7 +306,7 @@ components:
           minimum: 1
           maximum: 365
           default: 30
-          description: Effective recent-sale window in days. Set SOLD_COMP_RECENCY_DAYS to an integer from 1 through 365; invalid or missing values use the safe default of 30.
+          description: Effective recent-sale window in days for the requested market. Set SOLD_COMP_RECENCY_DAYS_BY_MARKET to a JSON object such as {"EBAY_US":14}; a valid matching entry takes precedence over SOLD_COMP_RECENCY_DAYS, invalid or missing per-market entries use the global setting, and invalid or missing global values use the safe default of 30.
         recent_count: { type: integer, minimum: 0 }
         stale_count: { type: integer, minimum: 0 }
         missing_count: { type: integer, minimum: 0 }

@@ -403,6 +403,7 @@ test("sold comps freshness flags mixed-age evidence without changing the estimat
 test("sold comps route exposes configured freshness window and safe fallback", { concurrency: false }, () => withServer(async (base) => {
   const savedDatabaseUrl = process.env.DATABASE_URL;
   const savedRecencyDays = process.env.SOLD_COMP_RECENCY_DAYS;
+  const savedMarketOverrides = process.env.SOLD_COMP_RECENCY_DAYS_BY_MARKET;
   const savedProviderEnv = new Map<string, string | undefined>();
   const providerEnvNames = [
     "EBAY_CLIENT_ID",
@@ -416,8 +417,9 @@ test("sold comps route exposes configured freshness window and safe fallback", {
   ];
   for (const name of providerEnvNames) savedProviderEnv.set(name, process.env[name]);
 
-  async function recentWindowDays() {
-    const response = await fetch(`${base}/v1/sold-comps?q=freshness-window&limit=10`);
+  async function recentWindowDays(market?: string) {
+    const marketParam = market ? `&market=${encodeURIComponent(market)}` : "";
+    const response = await fetch(`${base}/v1/sold-comps?q=freshness-window&limit=10${marketParam}`);
     assert.equal(response.status, 200);
     const body = await response.json() as { freshness: { recent_window_days: number } };
     return body.freshness.recent_window_days;
@@ -428,18 +430,30 @@ test("sold comps route exposes configured freshness window and safe fallback", {
     for (const name of providerEnvNames) delete process.env[name];
 
     delete process.env.SOLD_COMP_RECENCY_DAYS;
+    delete process.env.SOLD_COMP_RECENCY_DAYS_BY_MARKET;
     assert.equal(await recentWindowDays(), 30);
 
     process.env.SOLD_COMP_RECENCY_DAYS = "14";
     assert.equal(await recentWindowDays(), 14);
 
+    process.env.SOLD_COMP_RECENCY_DAYS_BY_MARKET = JSON.stringify({ EBAY_US: 7, invalid: 0 });
+    assert.equal(await recentWindowDays("EBAY_US"), 7);
+    assert.equal(await recentWindowDays("missing-market"), 14);
+    assert.equal(await recentWindowDays("invalid"), 14);
+
     process.env.SOLD_COMP_RECENCY_DAYS = "0";
-    assert.equal(await recentWindowDays(), 30);
+    assert.equal(await recentWindowDays("EBAY_US"), 7);
+    assert.equal(await recentWindowDays("missing-market"), 30);
+
+    process.env.SOLD_COMP_RECENCY_DAYS_BY_MARKET = "{not-json";
+    assert.equal(await recentWindowDays("EBAY_US"), 30);
   } finally {
     if (savedDatabaseUrl === undefined) delete process.env.DATABASE_URL;
     else process.env.DATABASE_URL = savedDatabaseUrl;
     if (savedRecencyDays === undefined) delete process.env.SOLD_COMP_RECENCY_DAYS;
     else process.env.SOLD_COMP_RECENCY_DAYS = savedRecencyDays;
+    if (savedMarketOverrides === undefined) delete process.env.SOLD_COMP_RECENCY_DAYS_BY_MARKET;
+    else process.env.SOLD_COMP_RECENCY_DAYS_BY_MARKET = savedMarketOverrides;
     for (const [name, value] of savedProviderEnv) {
       if (value === undefined) delete process.env[name];
       else process.env[name] = value;

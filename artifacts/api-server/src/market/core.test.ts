@@ -6,6 +6,7 @@ import {
   computeCoverage,
   buildSoldCompsResponse,
   getSoldCompRecencyDays,
+  getSoldCompRecencyDaysForMarket,
   getSoldCompRecencyWarning,
   isActionable,
   providerRegistry,
@@ -208,6 +209,39 @@ test("sold comp freshness accepts a bounded setting and falls back for invalid v
   } finally {
     if (savedRecencyDays === undefined) delete process.env.SOLD_COMP_RECENCY_DAYS;
     else process.env.SOLD_COMP_RECENCY_DAYS = savedRecencyDays;
+  }
+});
+
+test("sold comp freshness applies valid market overrides before the global setting", { concurrency: false }, () => {
+  const savedRecencyDays = process.env.SOLD_COMP_RECENCY_DAYS;
+  const savedMarketOverrides = process.env.SOLD_COMP_RECENCY_DAYS_BY_MARKET;
+  try {
+    process.env.SOLD_COMP_RECENCY_DAYS = "45";
+    process.env.SOLD_COMP_RECENCY_DAYS_BY_MARKET = JSON.stringify({
+      ebay_us: 14,
+      "slow-market": "7",
+      invalid_zero: 0,
+      invalid_decimal: 14.5,
+    });
+
+    assert.equal(getSoldCompRecencyDaysForMarket("EBAY_US"), 14);
+    assert.equal(getSoldCompRecencyDaysForMarket("slow-market"), 7);
+    assert.equal(getSoldCompRecencyDaysForMarket("missing-market"), 45);
+    assert.equal(getSoldCompRecencyDaysForMarket("invalid_zero"), 45);
+    assert.equal(getSoldCompRecencyDaysForMarket("invalid_decimal"), 45);
+    assert.equal(getSoldCompRecencyDaysForMarket("not a market"), 45);
+
+    process.env.SOLD_COMP_RECENCY_DAYS = "0";
+    assert.equal(getSoldCompRecencyDaysForMarket("missing-market"), SOLD_COMP_RECENCY_DAYS);
+    assert.equal(getSoldCompRecencyDaysForMarket("EBAY_US"), 14);
+
+    process.env.SOLD_COMP_RECENCY_DAYS_BY_MARKET = "{not-json";
+    assert.equal(getSoldCompRecencyDaysForMarket("EBAY_US"), SOLD_COMP_RECENCY_DAYS);
+  } finally {
+    if (savedRecencyDays === undefined) delete process.env.SOLD_COMP_RECENCY_DAYS;
+    else process.env.SOLD_COMP_RECENCY_DAYS = savedRecencyDays;
+    if (savedMarketOverrides === undefined) delete process.env.SOLD_COMP_RECENCY_DAYS_BY_MARKET;
+    else process.env.SOLD_COMP_RECENCY_DAYS_BY_MARKET = savedMarketOverrides;
   }
 });
 

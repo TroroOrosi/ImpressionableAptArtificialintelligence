@@ -10,7 +10,7 @@ import type { SoldCompsFreshnessStatus } from './soldCompsFreshnessStatus';
 export interface SoldCompsFreshness {
   status: SoldCompsFreshnessStatus;
   /**
-     * Effective recent-sale window in days. Set SOLD_COMP_RECENCY_DAYS to an integer from 1 through 365; invalid or missing values use the safe default of 30.
+     * Effective recent-sale window in days for the requested market. Set SOLD_COMP_RECENCY_DAYS_BY_MARKET to a JSON object such as {"EBAY_US":14}; a valid matching entry takes precedence over SOLD_COMP_RECENCY_DAYS, invalid or missing per-market entries use the global setting, and invalid or missing global values use the safe default of 30.
      * @minimum 1
      * @maximum 365
      */

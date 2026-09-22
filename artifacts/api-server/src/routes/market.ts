@@ -3,6 +3,7 @@ import { timingSafeEqual } from "node:crypto";
 import {
   buildSoldCompsResponse,
   computeCoverage,
+  normalizeSoldCompMarket,
   normalizeObservation,
   providerRegistry,
   verifyEvidence,
@@ -152,9 +153,10 @@ function soldCompKey(comp: {
   return [comp.source, comp.url, comp.sold_at, comp.sold_price, comp.currency].join("|");
 }
 
-async function soldCompsRoute(queryValue: unknown, limitValue: unknown) {
+async function soldCompsRoute(queryValue: unknown, limitValue: unknown, marketValue?: unknown) {
   const query = queryFrom(queryValue);
   const limit = limitFrom(limitValue);
+  const market = normalizeSoldCompMarket(marketValue);
   const live = await searchSoldComps(query, limit);
   let writeStatus: MarketPersistenceStatus = "available";
   if (live.comps.length) {
@@ -182,7 +184,7 @@ async function soldCompsRoute(queryValue: unknown, limitValue: unknown) {
   const persistenceStatus = writeStatus === "unavailable" || stored.status === "unavailable"
     ? "unavailable"
     : "available";
-  return buildSoldCompsResponse(query, comps, persistenceStatus);
+  return buildSoldCompsResponse(query, comps, persistenceStatus, market);
 }
 
 function priceHistoryResponse(result: Awaited<ReturnType<typeof getStoredPriceHistory>>) {
@@ -212,7 +214,7 @@ router.get("/v1/price-history", async (req,res): Promise<void> => {
   res.json(priceHistoryResponse(await getStoredPriceHistory(queryFrom(req.query.identity))));
 });
 router.get("/v1/sold-comps", async (req,res): Promise<void> => {
-  res.json(await soldCompsRoute(req.query.q, req.query.limit));
+  res.json(await soldCompsRoute(req.query.q, req.query.limit, req.query.market));
 });
 router.get("/v1/compare", async (req,res) => {
   try { res.json(await searchRoute(req.query.q, "products", req.query.limit)); }
@@ -307,7 +309,7 @@ const toolNames = ["search_products","search_auctions","fetch_listing","get_pric
 router.post("/mcp", async (req,res) => {
   const { id, method, params } = req.body || {};
   if (method === "initialize") { res.json({ jsonrpc:"2.0",id,result:{ protocolVersion:"2025-06-18",capabilities:{tools:{}},serverInfo:{name:"market-intel-mcp",version:"1.0.0"} } }); return; }
-  if (method === "tools/list") { res.json({ jsonrpc:"2.0",id,result:{tools:toolNames.map(name=>({name,description:`Market Intel: ${name}`,inputSchema:{type:"object",properties:{q:{type:"string"},url:{type:"string"}}}}))} }); return; }
+  if (method === "tools/list") { res.json({ jsonrpc:"2.0",id,result:{tools:toolNames.map(name=>({name,description:`Market Intel: ${name}`,inputSchema:{type:"object",properties:{q:{type:"string"},url:{type:"string"},market:{type:"string"}}}}))} }); return; }
   if (method === "tools/call") {
     const name = params?.name, args = params?.arguments || {};
     try {
@@ -321,7 +323,7 @@ router.post("/mcp", async (req,res) => {
         data = { ...computeCoverage(sources), sources };
       }
       else if (name === "get_sold_comps") {
-        data = await soldCompsRoute(args.q, args.limit);
+        data = await soldCompsRoute(args.q, args.limit, args.market);
       }
       else if (name === "get_price_history") {
         data = priceHistoryResponse(await getStoredPriceHistory(queryFrom(args.identity ?? args.q)));

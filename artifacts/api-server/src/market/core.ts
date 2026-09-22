@@ -338,7 +338,10 @@ function removePriceOutliers(comps: SoldCompRecord[]) {
  *
  * `SOLD_COMP_RECENCY_DAYS` may override this value with an integer from 1
  * through 365.
- * Invalid, missing, or out-of-range values use this default.
+ * `SOLD_COMP_RECENCY_DAYS_BY_MARKET` may provide a JSON object of market keys
+ * to integer day values. A valid market entry takes precedence over the
+ * global setting, while invalid or missing entries fall back to the global
+ * setting and then this default.
  */
 export const SOLD_COMP_RECENCY_DAYS = 30;
 export const SOLD_COMP_RECENCY_MIN_DAYS = 1;
@@ -360,6 +363,59 @@ export function getSoldCompRecencyDays(rawValue = process.env.SOLD_COMP_RECENCY_
   return parseSoldCompRecencyDays(rawValue) ?? SOLD_COMP_RECENCY_DAYS;
 }
 
+export function normalizeSoldCompMarket(rawValue: unknown) {
+  if (typeof rawValue !== "string") return null;
+  const value = rawValue.trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(value)) return null;
+  return value.toUpperCase();
+}
+
+function parseSoldCompRecencyValue(rawValue: unknown) {
+  if (typeof rawValue === "number") {
+    return Number.isSafeInteger(rawValue)
+      && rawValue >= SOLD_COMP_RECENCY_MIN_DAYS
+      && rawValue <= SOLD_COMP_RECENCY_MAX_DAYS
+      ? rawValue
+      : null;
+  }
+  return typeof rawValue === "string" ? parseSoldCompRecencyDays(rawValue) : null;
+}
+
+function parseSoldCompRecencyOverrides(rawValue = process.env.SOLD_COMP_RECENCY_DAYS_BY_MARKET) {
+  if (!rawValue?.trim()) return new Map<string, number>();
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawValue);
+  } catch {
+    return new Map<string, number>();
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return new Map<string, number>();
+  }
+
+  const overrides = new Map<string, number>();
+  for (const [rawMarket, rawDays] of Object.entries(parsed)) {
+    const market = normalizeSoldCompMarket(rawMarket);
+    const days = parseSoldCompRecencyValue(rawDays);
+    if (market && days != null) overrides.set(market, days);
+  }
+  return overrides;
+}
+
+export function getSoldCompRecencyDaysForMarket(
+  market: unknown,
+  rawGlobalValue = process.env.SOLD_COMP_RECENCY_DAYS,
+  rawMarketOverrides = process.env.SOLD_COMP_RECENCY_DAYS_BY_MARKET,
+) {
+  const normalizedMarket = normalizeSoldCompMarket(market);
+  const marketOverride = normalizedMarket
+    ? parseSoldCompRecencyOverrides(rawMarketOverrides).get(normalizedMarket)
+    : undefined;
+  return marketOverride ?? getSoldCompRecencyDays(rawGlobalValue);
+}
+
 export function getSoldCompRecencyWarning(rawValue = process.env.SOLD_COMP_RECENCY_DAYS) {
   if (rawValue === undefined || parseSoldCompRecencyDays(rawValue) != null) return null;
 
@@ -371,9 +427,10 @@ const millisecondsPerDay = 24 * 60 * 60 * 1_000;
 export function summarizeSoldCompsFreshness(
   comps: SoldCompRecord[],
   now = new Date(),
+  market?: unknown,
 ): SoldCompsFreshness {
   const nowMs = now.getTime();
-  const recentWindowDays = getSoldCompRecencyDays();
+  const recentWindowDays = getSoldCompRecencyDaysForMarket(market);
   const recentCutoffMs = nowMs - recentWindowDays * millisecondsPerDay;
   let recentCount = 0;
   let staleCount = 0;
@@ -410,6 +467,7 @@ export function buildSoldCompsResponse(
   query: string,
   comps: SoldCompRecord[],
   persistenceStatus: MarketPersistenceStatus = "available",
+  market?: unknown,
 ): SoldCompsResult {
   const usable = removePriceOutliers(comps);
   const conservative = quantile(usable.map((comp) => comp.normalized_price), 0.25);
@@ -431,7 +489,7 @@ export function buildSoldCompsResponse(
           : "high",
     confidence,
     persistence_status: persistenceStatus,
-    freshness: summarizeSoldCompsFreshness(usable),
+    freshness: summarizeSoldCompsFreshness(usable, new Date(), market),
   };
 }
 

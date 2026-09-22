@@ -13,4 +13,11 @@ q: string;
  * @maximum 50
  */
 limit?: number;
+/**
+ * Optional market key for freshness policy selection. Set SOLD_COMP_RECENCY_DAYS_BY_MARKET to a JSON object such as {"EBAY_US":14}; a valid matching entry takes precedence over SOLD_COMP_RECENCY_DAYS, while invalid or missing entries fall back to the global setting and then the safe default of 30 days.
+ * @minLength 1
+ * @maxLength 64
+ * @pattern ^[A-Za-z0-9][A-Za-z0-9_.-]*$
+ */
+market?: string;
 };

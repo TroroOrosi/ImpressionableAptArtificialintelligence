@@ -295,11 +295,16 @@ export const GetPriceHistoryResponse = zod.object({
 export const getSoldCompsQueryLimitDefault = 20;
 export const getSoldCompsQueryLimitMax = 50;
 
+export const getSoldCompsQueryMarketMax = 64;
+
+
+export const getSoldCompsQueryMarketRegExp = new RegExp('^[A-Za-z0-9][A-Za-z0-9_.-]*$');
 
 
 export const GetSoldCompsQueryParams = zod.object({
   "q": zod.coerce.string(),
-  "limit": zod.coerce.number().int().min(1).max(getSoldCompsQueryLimitMax).default(getSoldCompsQueryLimitDefault)
+  "limit": zod.coerce.number().int().min(1).max(getSoldCompsQueryLimitMax).default(getSoldCompsQueryLimitDefault),
+  "market": zod.coerce.string().min(1).max(getSoldCompsQueryMarketMax).regex(getSoldCompsQueryMarketRegExp).optional().describe('Optional market key for freshness policy selection. Set SOLD_COMP_RECENCY_DAYS_BY_MARKET to a JSON object such as {"EBAY_US":14}; a valid matching entry takes precedence over SOLD_COMP_RECENCY_DAYS, while invalid or missing entries fall back to the global setting and then the safe default of 30 days.')
 })
 
 export const getSoldCompsResponseFreshnessRecentWindowDaysDefault = 30;
@@ -349,7 +354,7 @@ export const GetSoldCompsResponse = zod.object({
   "persistence_status": zod.enum(['available', 'unavailable']),
   "freshness": zod.object({
   "status": zod.enum(['recent', 'stale', 'missing']),
-  "recent_window_days": zod.number().int().min(1).max(getSoldCompsResponseFreshnessRecentWindowDaysMax).default(getSoldCompsResponseFreshnessRecentWindowDaysDefault).describe('Effective recent-sale window in days. Set SOLD_COMP_RECENCY_DAYS to an integer from 1 through 365; invalid or missing values use the safe default of 30.'),
+  "recent_window_days": zod.number().int().min(1).max(getSoldCompsResponseFreshnessRecentWindowDaysMax).default(getSoldCompsResponseFreshnessRecentWindowDaysDefault).describe('Effective recent-sale window in days for the requested market. Set SOLD_COMP_RECENCY_DAYS_BY_MARKET to a JSON object such as {"EBAY_US":14}; a valid matching entry takes precedence over SOLD_COMP_RECENCY_DAYS, invalid or missing per-market entries use the global setting, and invalid or missing global values use the safe default of 30.'),
   "recent_count": zod.number().int().min(getSoldCompsResponseFreshnessRecentCountMin),
   "stale_count": zod.number().int().min(getSoldCompsResponseFreshnessStaleCountMin),
   "missing_count": zod.number().int().min(getSoldCompsResponseFreshnessMissingCountMin),
