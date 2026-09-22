@@ -43,6 +43,9 @@ type SoldAdapter = {
 
 const REQUEST_TIMEOUT_MS = 12_000;
 const EBAY_SOLD_MARKETPLACE_IDS = new Set(["EBAY_US"]);
+const STOCKX_API_BASE = "https://api.stockx.com/v2";
+const STOCKX_AUTH_BASE = "https://accounts.stockx.com";
+const STOCKX_AUDIENCE = "gateway.stockx.com";
 
 class ProviderRequestError extends Error {
   readonly failureType: ProviderFailureType;
@@ -405,6 +408,305 @@ async function searchEbaySold(context: SoldSearchContext): Promise<SoldCompRecor
   return comps;
 }
 
+type StockXProductMatch = {
+  id: string;
+  record: JsonRecord;
+};
+
+type StockXCredentials = {
+  apiKey: string;
+  accessToken: string;
+};
+
+type StockXTokenCache = {
+  accessToken: string;
+  clientId: string;
+  clientSecret: string;
+  sourceRefreshToken: string;
+  refreshToken: string;
+  expiresAt: number;
+};
+
+let stockxTokenCache: StockXTokenCache | undefined;
+
+async function stockxAccessToken() {
+  const refreshToken = process.env.STOCKX_REFRESH_TOKEN?.trim();
+  const clientId = process.env.STOCKX_CLIENT_ID?.trim();
+  const clientSecret = process.env.STOCKX_CLIENT_SECRET?.trim();
+  if (refreshToken && clientId && clientSecret) {
+    if (
+      stockxTokenCache
+      && stockxTokenCache.clientId === clientId
+      && stockxTokenCache.clientSecret === clientSecret
+      && stockxTokenCache.sourceRefreshToken === refreshToken
+      && stockxTokenCache.expiresAt > Date.now() + 60_000
+    ) {
+      return stockxTokenCache.accessToken;
+    }
+
+    const payload = await fetchJson("stockx", `${STOCKX_AUTH_BASE}/oauth/token`, {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        client_id: clientId,
+        client_secret: clientSecret,
+        audience: STOCKX_AUDIENCE,
+        refresh_token: stockxTokenCache?.refreshToken || refreshToken,
+      }).toString(),
+    });
+    const record = asRecord(payload);
+    const accessToken = stringValue(record?.access_token);
+    if (!accessToken) throw new ProviderRequestError("stockx", "token_missing");
+    const expiresIn = Number(record?.expires_in);
+    stockxTokenCache = {
+      accessToken,
+      clientId,
+      clientSecret,
+      sourceRefreshToken: refreshToken,
+      refreshToken: stringValue(record?.refresh_token) || refreshToken,
+      expiresAt: Date.now() + (Number.isFinite(expiresIn) ? expiresIn * 1000 : 43_200_000),
+    };
+    return accessToken;
+  }
+
+  return requiredSecret("STOCKX_ACCESS_TOKEN", "stockx");
+}
+
+async function stockxCredentials(): Promise<StockXCredentials> {
+  return {
+    apiKey: requiredSecret("STOCKX_API_KEY", "stockx"),
+    accessToken: await stockxAccessToken(),
+  };
+}
+
+function stockxApiHeaders(credentials: StockXCredentials) {
+  return {
+    accept: "application/json",
+    authorization: `Bearer ${credentials.accessToken}`,
+    "x-api-key": credentials.apiKey,
+  };
+}
+
+async function searchStockXCatalog(
+  query: string,
+  limit: number,
+  credentials: StockXCredentials,
+): Promise<StockXProductMatch[]> {
+  const url = new URL(`${STOCKX_API_BASE}/catalog/search`);
+  url.searchParams.set("query", query);
+  url.searchParams.set("pageNumber", "1");
+  url.searchParams.set("pageSize", String(Math.min(50, Math.max(1, limit))));
+
+  const payload = await fetchJson("stockx", url.href, {
+    headers: stockxApiHeaders(credentials),
+  });
+  const matches: StockXProductMatch[] = [];
+  for (const item of recordsAt(payload, "products", "items", "results")) {
+    const id = firstString(item, "productId", "id", "product.id");
+    if (id) matches.push({ id, record: item });
+  }
+  return matches;
+}
+
+async function historicalStockXOrders(
+  productId: string | undefined,
+  limit: number,
+  credentials: StockXCredentials,
+) {
+  const url = new URL(`${STOCKX_API_BASE}/selling/orders/history`);
+  url.searchParams.set("orderStatus", "COMPLETED");
+  url.searchParams.set("pageNumber", "1");
+  url.searchParams.set("pageSize", String(Math.min(100, Math.max(1, limit))));
+  if (productId) url.searchParams.set("productId", productId);
+
+  const payload = await fetchJson("stockx", url.href, {
+    headers: stockxApiHeaders(credentials),
+  });
+  return recordsAt(payload, "orders", "items", "results");
+}
+
+function stockxProductUrl(order: JsonRecord, product: JsonRecord | undefined) {
+  const directUrl = firstString(
+    order,
+    "itemWebUrl",
+    "itemUrl",
+    "productUrl",
+    "productURL",
+    "url",
+    "link",
+    "product.url",
+    "product.productUrl",
+    "product.productURL",
+  ) ?? (product && firstString(product, "url", "productUrl", "productURL", "link"));
+  if (directUrl) return directUrl;
+
+  const urlKey = (product && firstString(product, "urlKey", "slug", "productUrlKey"))
+    ?? firstString(order, "urlKey", "slug", "product.urlKey", "product.slug");
+  if (!urlKey) return undefined;
+  const normalizedPath = urlKey.trim().replace(/^\/+/, "");
+  return normalizedPath ? `https://stockx.com/${normalizedPath}` : undefined;
+}
+
+function stockxIdentity(order: JsonRecord, product: JsonRecord | undefined): Identity {
+  const orderProduct = asRecord(firstValue(order, "product"));
+  const variant = asRecord(firstValue(order, "variant"));
+  const attributes = product && asRecord(firstValue(product, "productAttributes", "attributes"));
+  return {
+    brand: (product && firstString(product, "brand"))
+      ?? firstString(orderProduct || {}, "brand")
+      ?? firstString(order, "brand"),
+    mpn: (product && firstString(product, "styleId", "styleID", "productId"))
+      ?? firstString(orderProduct || {}, "styleId", "styleID", "productId"),
+    model: (product && firstString(product, "title", "productName", "name"))
+      ?? firstString(orderProduct || {}, "productName", "title", "name"),
+    gtin: (product && firstString(product, "gtin"))
+      ?? firstString(attributes || {}, "gtin", "GTIN"),
+    color: (product && firstString(product, "colorway", "color", "colour"))
+      ?? firstString(attributes || {}, "colorway", "color", "colour"),
+    condition: firstString(order, "condition", "conditionDescription")
+      ?? firstString(orderProduct || {}, "condition", "conditionDescription"),
+    version: variant ? firstString(variant, "variantName", "variantValue") : undefined,
+  };
+}
+
+function stockxOrderMatchesQuery(order: JsonRecord, query: string) {
+  const orderProduct = asRecord(firstValue(order, "product"));
+  const variant = asRecord(firstValue(order, "variant"));
+  const searchable = [
+    firstString(orderProduct || {}, "productName", "title", "name"),
+    firstString(orderProduct || {}, "styleId", "styleID"),
+    firstString(variant || {}, "variantName", "variantValue"),
+    firstString(order, "title", "name", "styleId", "styleID"),
+  ].filter((value): value is string => Boolean(value));
+  const normalizedQuery = query.trim().toLowerCase();
+  return Boolean(normalizedQuery) && searchable.some((value) => value.toLowerCase().includes(normalizedQuery));
+}
+
+function stockxOrderStatus(order: JsonRecord) {
+  return firstString(
+    order,
+    "order.orderStatus",
+    "orderStatus",
+    "status.value",
+    "status.name",
+    "status",
+  )?.toUpperCase();
+}
+
+function stockxCompletedAt(order: JsonRecord) {
+  return validTimestamp(firstValue(
+    order,
+    "completedAt",
+    "orderCompletedAt",
+    "order.completedAt",
+    "order.orderCompletedAt",
+    "soldAt",
+    "saleDate",
+    "transactionDate",
+    "orderCreatedAt",
+    "order.orderCreatedAt",
+    // ListOrders.createdAt is documented as the order creation time. Because
+    // this request is filtered to the provider's COMPLETED history, it is the
+    // provider-owned sale time; updatedAt is intentionally not accepted.
+    "createdAt",
+  ));
+}
+
+function stockxCondition(order: JsonRecord) {
+  const orderProduct = asRecord(firstValue(order, "product"));
+  return firstString(
+    order,
+    "condition",
+    "conditionDescription",
+    "itemCondition",
+  ) ?? firstString(orderProduct || {}, "condition", "conditionDescription");
+}
+
+function stockxSoldComp(
+  order: JsonRecord,
+  product: JsonRecord | undefined,
+  query: string,
+): SoldCompRecord | null {
+  const orderProduct = asRecord(firstValue(order, "product"));
+  const payout = asRecord(firstValue(order, "payout"));
+  if (stockxOrderStatus(order) !== "COMPLETED") return null;
+  const priceValue = firstValue(payout || {}, "salePrice")
+    ?? firstValue(order, "salePrice", "soldPrice");
+  const currency = firstString(
+    payout || {},
+    "currencyCode",
+    "currency",
+    "price.currency",
+  ) ?? firstString(order, "currencyCode", "currency", "price.currency");
+  const soldAt = stockxCompletedAt(order);
+  const condition = stockxCondition(order);
+  const identity = stockxIdentity(order, product);
+  const title = (product && firstValue(product, "title", "productName", "name"))
+    ?? firstValue(orderProduct || {}, "productName", "title", "name")
+    ?? firstValue(order, "title", "name");
+  const url = stockxProductUrl(order, product);
+  const hasStructuredIdentity = ["brand", "mpn", "model", "color", "version"]
+    .some((key) => typeof identity[key] === "string" && identity[key]);
+  if (!soldAt || !condition || !currency || !title || !url || !hasStructuredIdentity) return null;
+
+  return normalizeSoldCompRecord({
+    query,
+    title,
+    soldPrice: priceValue,
+    currency,
+    soldAt,
+    source: "stockx",
+    condition,
+    url,
+    identity,
+    providerItemId: firstValue(order, "orderNumber", "order.orderNumber", "listingId", "askId", "id"),
+  });
+}
+
+async function searchStockXSold(context: SoldSearchContext): Promise<SoldCompRecord[]> {
+  const credentials = await stockxCredentials();
+  const matches = await searchStockXCatalog(context.query, context.limit, credentials);
+  const products = matches.slice(0, Math.min(5, context.limit));
+  const comps: SoldCompRecord[] = [];
+  const seen = new Set<string>();
+
+  if (products.length) {
+    for (const product of products) {
+      const orders = await historicalStockXOrders(product.id, context.limit, credentials);
+      for (const order of orders) {
+        const comp = stockxSoldComp(order, product.record, context.query);
+        if (!comp) continue;
+        const key = [comp.url, comp.sold_at, comp.sold_price, comp.currency].join("|");
+        if (seen.has(key)) continue;
+        seen.add(key);
+        comps.push(comp);
+        if (comps.length >= context.limit) return comps;
+      }
+    }
+    return comps;
+  }
+
+  // The catalog API is the normal path because it gives us an official product URL.
+  // Keep a structured order-history fallback for keys that can read sales but cannot
+  // search the catalog; it never treats a missing price or URL as evidence.
+  const orders = await historicalStockXOrders(undefined, context.limit, credentials);
+  for (const order of orders) {
+    if (!stockxOrderMatchesQuery(order, context.query)) continue;
+    const comp = stockxSoldComp(order, undefined, context.query);
+    if (!comp) continue;
+    const key = [comp.url, comp.sold_at, comp.sold_price, comp.currency].join("|");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    comps.push(comp);
+    if (comps.length >= context.limit) break;
+  }
+  return comps;
+}
+
 function keepaPrice(product: JsonRecord): number | null {
   const stats = asRecord(firstValue(product, "stats"));
   const current = firstValue(stats || {}, "current");
@@ -599,6 +901,7 @@ const adapters: Record<string, SearchAdapter> = {
 
 const soldAdapters: Record<string, SoldAdapter> = {
   ebay: { search: searchEbaySold },
+  stockx: { search: searchStockXSold },
 };
 
 function configuredProvider(providerId: string) {
@@ -714,7 +1017,12 @@ export async function sourceHealth() {
   return providerRegistry.map((provider) => {
     const metrics = getProviderHealth(provider.id);
     const configured = configuredProvider(provider.id);
-    const available = configured && (hasProviderAdapter(provider.id) || provider.id === "jsonld");
+    const soldCompsCapable = configured && hasSoldCompsAdapter(provider.id);
+    const available = configured && (
+      hasProviderAdapter(provider.id)
+      || soldCompsCapable
+      || provider.id === "jsonld"
+    );
     const attempts = metrics.attempts || 0;
     const successRate = attempts ? metrics.successes / attempts : 0;
     return {
@@ -723,6 +1031,7 @@ export async function sourceHealth() {
       tier: provider.tier,
       configured,
       available,
+      sold_comps_capable: soldCompsCapable,
       success_rate: successRate,
       price_success_rate: attempts && metrics.observations ? successRate : 0,
       identity_success_rate: attempts && metrics.observations ? successRate : 0,

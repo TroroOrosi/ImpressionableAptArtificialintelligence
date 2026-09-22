@@ -211,6 +211,7 @@ export const GetSourceHealthResponseItem = zod.object({
   "tier": zod.number().int(),
   "configured": zod.boolean(),
   "available": zod.boolean(),
+  "sold_comps_capable": zod.boolean(),
   "success_rate": zod.number(),
   "price_success_rate": zod.number(),
   "identity_success_rate": zod.number(),

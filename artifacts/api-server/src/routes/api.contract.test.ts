@@ -16,11 +16,12 @@ test("public GET endpoint schemas remain stable", () => withServer(async (base) 
     fetch(`${base}/healthz`).then((r) => r.json()),
     fetch(`${base}/v1/source-coverage`).then((r) => r.json()),
     fetch(`${base}/v1/public/source-health`).then((r) => r.json()),
-  ]) as [{ status: string }, { measured_coverage_percent: number }, Array<{ configured: boolean }>];
+  ]) as [{ status: string }, { measured_coverage_percent: number }, Array<{ configured: boolean; sold_comps_capable: boolean }>];
   assert.equal(health.status, "ok");
   assert.equal(typeof coverage.measured_coverage_percent, "number");
   assert.ok(Array.isArray(sourceHealth));
   assert.equal(typeof sourceHealth[0].configured, "boolean");
+  assert.equal(typeof sourceHealth[0].sold_comps_capable, "boolean");
 }));
 
 test("generic fallback rejects private and unsafe URLs", () => withServer(async (base) => {
@@ -89,7 +90,20 @@ test("setup and health responses never expose credential environment names or va
     fetch(`${base}/v1/public/source-health`).then((r) => r.text()),
   ]);
   const combined = responses.join("\n");
-  for (const secretName of ["YAHOO_CLIENT_ID","RAKUTEN_APP_ID","EBAY_CLIENT_ID","KEEPA_API_KEY","SERPAPI_KEY","APIFY_TOKEN","BRIGHT_DATA_TOKEN"]) {
+  for (const secretName of [
+    "YAHOO_CLIENT_ID",
+    "RAKUTEN_APP_ID",
+    "EBAY_CLIENT_ID",
+    "STOCKX_API_KEY",
+    "STOCKX_ACCESS_TOKEN",
+    "STOCKX_REFRESH_TOKEN",
+    "STOCKX_CLIENT_ID",
+    "STOCKX_CLIENT_SECRET",
+    "KEEPA_API_KEY",
+    "SERPAPI_KEY",
+    "APIFY_TOKEN",
+    "BRIGHT_DATA_TOKEN",
+  ]) {
     assert.equal(combined.includes(secretName), false);
   }
 }));

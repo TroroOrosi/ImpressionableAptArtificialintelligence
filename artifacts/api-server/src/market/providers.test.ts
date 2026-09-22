@@ -11,6 +11,11 @@ const providerEnv = [
   "EBAY_ACCESS_TOKEN",
   "EBAY_MARKETPLACE_ID",
   "EBAY_SANDBOX",
+  "STOCKX_API_KEY",
+  "STOCKX_ACCESS_TOKEN",
+  "STOCKX_REFRESH_TOKEN",
+  "STOCKX_CLIENT_ID",
+  "STOCKX_CLIENT_SECRET",
   "KEEPA_API_KEY",
   "SERPAPI_KEY",
   "APIFY_TOKEN",
@@ -313,6 +318,179 @@ test("official sold adapter normalizes completed marketplace sales only", { conc
   }
 });
 
+test("StockX sold adapter uses catalog identity and completed order data only", { concurrency: false }, async () => {
+  const savedEnv = saveProviderEnv();
+  const originalFetch = globalThis.fetch;
+  try {
+    clearProviderEnv();
+    process.env.STOCKX_API_KEY = "test-stockx";
+    process.env.STOCKX_REFRESH_TOKEN = "test-stockx-refresh";
+    process.env.STOCKX_CLIENT_ID = "test-stockx-client";
+    process.env.STOCKX_CLIENT_SECRET = "test-stockx-secret";
+    assert.deepEqual(availableSoldProviderIds(), ["stockx"]);
+
+    const calls: Array<{ url: string; headers: Headers }> = [];
+    globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({ url, headers: new Headers(init?.headers) });
+      if (url.includes("accounts.stockx.com/oauth/token")) {
+        assert.equal(init?.method, "POST");
+        assert.equal(new Headers(init?.headers).get("content-type"), "application/x-www-form-urlencoded");
+        const body = new URLSearchParams(String(init?.body));
+        assert.equal(body.get("grant_type"), "refresh_token");
+        assert.equal(body.get("client_id"), "test-stockx-client");
+        assert.equal(body.get("client_secret"), "test-stockx-secret");
+        assert.equal(body.get("audience"), "gateway.stockx.com");
+        assert.equal(body.get("refresh_token"), "test-stockx-refresh");
+        return jsonResponse({
+          access_token: "test-stockx-access-token",
+          expires_in: 43200,
+          token_type: "Bearer",
+        });
+      }
+      if (url.includes("/v2/catalog/search")) {
+        assert.equal(new Headers(init?.headers).get("x-api-key"), "test-stockx");
+        assert.equal(new Headers(init?.headers).get("authorization"), "Bearer test-stockx-access-token");
+        return jsonResponse({
+          products: [{
+            productId: "stockx-camera",
+            urlKey: "example-camera",
+            title: "Example Camera",
+            brand: "Example",
+            styleId: "CAM-001",
+            productAttributes: { colorway: "Black" },
+          }],
+        });
+      }
+      if (url.includes("/v2/selling/orders/history")) {
+        assert.equal(new Headers(init?.headers).get("x-api-key"), "test-stockx");
+        assert.equal(new Headers(init?.headers).get("authorization"), "Bearer test-stockx-access-token");
+        assert.equal(new URL(url).searchParams.get("orderStatus"), "COMPLETED");
+        assert.equal(new URL(url).searchParams.get("productId"), "stockx-camera");
+        return jsonResponse({
+          orders: [
+            {
+              orderNumber: "order-1",
+              status: "COMPLETED",
+              createdAt: "2026-09-20T10:00:00.000Z",
+              updatedAt: "2026-09-21T10:00:00.000Z",
+              condition: "New",
+              currencyCode: "USD",
+              payout: { salePrice: "100", currencyCode: "USD" },
+              product: { productId: "stockx-camera", productName: "Example Camera", styleId: "CAM-001" },
+              variant: { variantId: "variant-1", variantName: "One Size", variantValue: "One Size" },
+            },
+            {
+              orderNumber: "order-2",
+              status: "CANCELED",
+              createdAt: "2026-09-21T10:00:00.000Z",
+              payout: { salePrice: "900", currencyCode: "USD" },
+              currencyCode: "USD",
+              product: { productId: "stockx-camera", productName: "Example Camera" },
+            },
+            {
+              orderNumber: "order-3",
+              status: "COMPLETED",
+              payout: { salePrice: "900", currencyCode: "USD" },
+              currencyCode: "USD",
+              product: { productId: "stockx-camera", productName: "Example Camera" },
+            },
+            {
+              createdAt: "2026-09-22T10:00:00.000Z",
+              condition: "New",
+              payout: { salePrice: "800", currencyCode: "USD" },
+              product: { productId: "stockx-camera", productName: "Example Camera" },
+            },
+          ],
+        });
+      }
+      throw new Error(`Unexpected test URL: ${url}`);
+    }) as typeof fetch;
+
+    const response = await searchSoldComps("camera", 10);
+    assert.deepEqual(response.providers_queried, ["stockx"]);
+    assert.equal(response.comps.length, 1);
+    assert.deepEqual(response.comps[0], {
+      title: "Example Camera",
+      sold_price: 100,
+      currency: "USD",
+      sold_at: "2026-09-20T10:00:00.000Z",
+      source: "stockx",
+      normalized_price: 15000,
+      condition: "new",
+      url: "https://stockx.com/example-camera",
+      identity: {
+        brand: "Example",
+        mpn: "CAM-001",
+        model: "Example Camera",
+        color: "Black",
+        condition: "New",
+        version: "One Size",
+        accessories: [],
+      },
+    });
+    assert.ok(calls.some(({ url }) => url.includes("/v2/catalog/search")));
+    const health = (await sourceHealth()).find((provider) => provider.id === "stockx");
+    assert.equal(health?.configured, true);
+    assert.equal(health?.available, true);
+    assert.equal(health?.sold_comps_capable, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreProviderEnv(savedEnv);
+  }
+});
+
+test("StockX sold adapter requires explicit completed status and structured sale evidence", { concurrency: false }, async () => {
+  const savedEnv = saveProviderEnv();
+  const originalFetch = globalThis.fetch;
+  try {
+    clearProviderEnv();
+    process.env.STOCKX_API_KEY = "test-stockx";
+    process.env.STOCKX_ACCESS_TOKEN = "test-stockx-access-token";
+
+    globalThis.fetch = (async (input: string | URL) => {
+      const url = String(input);
+      if (url.includes("/v2/catalog/search")) {
+        return jsonResponse({
+          products: [{
+            productId: "stockx-camera",
+            urlKey: "example-camera",
+            title: "Example Camera",
+            brand: "Example",
+            styleId: "CAM-001",
+          }],
+        });
+      }
+      if (url.includes("/v2/selling/orders/history")) {
+        return jsonResponse({
+          orders: [
+            {
+              completedAt: "2026-09-20T10:00:00.000Z",
+              condition: "New",
+              payout: { salePrice: "100", currencyCode: "USD" },
+              product: { productId: "stockx-camera", productName: "Example Camera" },
+            },
+            {
+              orderStatus: "COMPLETED",
+              completedAt: "2026-09-20T10:00:00.000Z",
+              payout: { salePrice: "100", currencyCode: "USD" },
+              product: { productId: "stockx-camera", productName: "Example Camera" },
+            },
+          ],
+        });
+      }
+      throw new Error(`Unexpected test URL: ${url}`);
+    }) as typeof fetch;
+
+    const response = await searchSoldComps("camera", 10);
+    assert.deepEqual(response.providers_queried, ["stockx"]);
+    assert.deepEqual(response.comps, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreProviderEnv(savedEnv);
+  }
+});
+
 test("sold adapter rejects unsupported eBay marketplace configuration before requesting sales", { concurrency: false }, async () => {
   const savedEnv = saveProviderEnv();
   const originalFetch = globalThis.fetch;
@@ -361,6 +539,12 @@ test("optional adapters activate only when their secrets are present", { concurr
   try {
     clearProviderEnv();
     assert.deepEqual(availableProviderIds("products"), []);
+    process.env.STOCKX_API_KEY = "test-stockx";
+    assert.deepEqual(availableSoldProviderIds(), []);
+    const stockxHealth = (await sourceHealth()).find((provider) => provider.id === "stockx");
+    assert.equal(stockxHealth?.configured, false);
+    assert.equal(stockxHealth?.available, false);
+    assert.equal(stockxHealth?.sold_comps_capable, false);
 
     process.env.KEEPA_API_KEY = "test-keepa";
     process.env.APIFY_TOKEN = "test-apify";

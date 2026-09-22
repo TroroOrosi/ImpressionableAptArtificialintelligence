@@ -60,7 +60,7 @@ const trustedSources = () => [
     searchable,
     live_price_capable: livePriceCapable,
     sold_comps_capable: soldCompsCapable,
-    health: searchable ? "healthy" : "disabled",
+    health: searchable || soldCompsCapable ? "healthy" : "disabled",
   };
 });
 router.use("/v1/public", (req, res, next) => {

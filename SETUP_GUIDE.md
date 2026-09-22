@@ -10,6 +10,9 @@
 - `EBAY_CLIENT_ID`
 - `EBAY_CLIENT_SECRET`（または事前発行済みの `EBAY_ACCESS_TOKEN`）
 - `EBAY_MARKETPLACE_ID`（任意。sold comps は現在 `EBAY_US` のみ対応し、未設定時も `EBAY_US` を使います。Marketplace Insights の利用権限が必要です。sold comps を使う場合は `EBAY_US` を指定してください）
+- `STOCKX_API_KEY`（StockX Developer PortalのV2 APIキー）
+- `STOCKX_ACCESS_TOKEN`（StockX OAuthのアクセストークン。APIキーとBearerトークンの両方が必要です）
+- `STOCKX_REFRESH_TOKEN`、`STOCKX_CLIENT_ID`、`STOCKX_CLIENT_SECRET`（アクセストークンを自動更新する場合。`STOCKX_ACCESS_TOKEN`の代わりに3つすべてを設定します）
 - `AMAZON_CREATORS_KEY`
 - `KEEPA_API_KEY`
 - `SERPAPI_KEY`

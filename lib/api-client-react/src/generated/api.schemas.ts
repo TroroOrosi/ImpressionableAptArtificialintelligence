@@ -146,6 +146,7 @@ export interface SourceHealth {
   tier: number;
   configured: boolean;
   available: boolean;
+  sold_comps_capable: boolean;
   success_rate: number;
   price_success_rate: number;
   identity_success_rate: number;

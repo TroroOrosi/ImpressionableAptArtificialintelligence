@@ -86,7 +86,7 @@ paths:
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
       responses:
         "200":
-          description: Verified sold comparisons from supported official marketplaces
+          description: Verified sold comparisons from configured supported official marketplaces
           content: { application/json: { schema: { $ref: "#/components/schemas/SoldCompsResult" } } }
   /v1/compare:
     get:
@@ -234,13 +234,14 @@ components:
         snippet: { type: string }
     SourceHealth:
       type: object
-      required: [id, label, tier, configured, available, success_rate, price_success_rate, identity_success_rate, last_error_type, latency_ms, consecutive_failures]
+      required: [id, label, tier, configured, available, sold_comps_capable, success_rate, price_success_rate, identity_success_rate, last_error_type, latency_ms, consecutive_failures]
       properties:
         id: { type: string }
         label: { type: string }
         tier: { type: integer }
         configured: { type: boolean }
         available: { type: boolean }
+        sold_comps_capable: { type: boolean }
         success_rate: { type: number }
         price_success_rate: { type: number }
         identity_success_rate: { type: number }

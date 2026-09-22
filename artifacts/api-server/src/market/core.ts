@@ -358,10 +358,11 @@ function observationGroupKey(observation: Observation) {
   return `title:${observation.title.trim().toLowerCase().replace(/\s+/g, " ")}`;
 }
 
-export function isProviderConfigured(provider: Pick<ProviderDefinition, "env" | "requiredEnv" | "anyEnv">) {
+export function isProviderConfigured(provider: Pick<ProviderDefinition, "env" | "requiredEnv" | "anyEnv" | "anyEnvGroups">) {
   const required = provider.requiredEnv ?? (provider.env ? [provider.env] : []);
   if (!required.every(hasEnv)) return false;
-  return !provider.anyEnv || provider.anyEnv.some(hasEnv);
+  if (provider.anyEnv && !provider.anyEnv.some(hasEnv)) return false;
+  return !provider.anyEnvGroups || provider.anyEnvGroups.some((group) => group.every(hasEnv));
 }
 
 export type ProviderDefinition = {
@@ -372,6 +373,7 @@ export type ProviderDefinition = {
   env?: string;
   requiredEnv?: readonly string[];
   anyEnv?: readonly string[];
+  anyEnvGroups?: readonly (readonly string[])[];
   readonly configured: boolean;
 };
 
@@ -394,6 +396,18 @@ const providerDefinitions: Array<Omit<ProviderDefinition, "configured">> = [
     env: "EBAY_CLIENT_ID",
     requiredEnv: ["EBAY_CLIENT_ID"],
     anyEnv: ["EBAY_CLIENT_SECRET", "EBAY_ACCESS_TOKEN"],
+  },
+  {
+    id: "stockx",
+    label: "StockX API",
+    tier: 1,
+    kind: "official",
+    env: "STOCKX_API_KEY",
+    requiredEnv: ["STOCKX_API_KEY"],
+    anyEnvGroups: [
+      ["STOCKX_ACCESS_TOKEN"],
+      ["STOCKX_REFRESH_TOKEN", "STOCKX_CLIENT_ID", "STOCKX_CLIENT_SECRET"],
+    ],
   },
   { id: "amazon", label: "Amazon Creators API", tier: 1, kind: "official", env: "AMAZON_CREATORS_KEY" },
   { id: "keepa", label: "Keepa", tier: 2, kind: "specialist", env: "KEEPA_API_KEY" },
