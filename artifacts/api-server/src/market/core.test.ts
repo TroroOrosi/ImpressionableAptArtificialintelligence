@@ -23,6 +23,8 @@ import {
 } from "./core";
 
 const apiEntrypoint = fileURLToPath(new URL("../index.ts", import.meta.url));
+const apiBuildEntrypoint = fileURLToPath(new URL("../../build.mjs", import.meta.url));
+const bundledApiEntrypoint = fileURLToPath(new URL("../../dist/index.mjs", import.meta.url));
 const apiServerRoot = fileURLToPath(new URL("../../", import.meta.url));
 
 async function findAvailablePort() {
@@ -63,7 +65,7 @@ async function stopChildProcess(child: ReturnType<typeof spawn>) {
   }
 }
 
-async function runApiEntrypoint(soldCompRecencyDays?: string) {
+async function runApiProcess(entrypointArgs: string[], soldCompRecencyDays?: string) {
   const port = await findAvailablePort();
   const childEnv: NodeJS.ProcessEnv = {
     PATH: process.env.PATH,
@@ -77,7 +79,7 @@ async function runApiEntrypoint(soldCompRecencyDays?: string) {
     childEnv.SOLD_COMP_RECENCY_DAYS = soldCompRecencyDays;
   }
 
-  const child = spawn(process.execPath, ["--import", "tsx", apiEntrypoint], {
+  const child = spawn(process.execPath, entrypointArgs, {
     cwd: apiServerRoot,
     env: childEnv,
     stdio: ["ignore", "pipe", "pipe"],
@@ -122,6 +124,43 @@ async function runApiEntrypoint(soldCompRecencyDays?: string) {
     await stopChildProcess(child);
   }
   return output;
+}
+
+async function runApiEntrypoint(soldCompRecencyDays?: string) {
+  return runApiProcess(["--import", "tsx", apiEntrypoint], soldCompRecencyDays);
+}
+
+async function runBundledApiEntrypoint(soldCompRecencyDays?: string) {
+  return runApiProcess([bundledApiEntrypoint], soldCompRecencyDays);
+}
+
+async function buildApiBundle() {
+  const child = spawn(process.execPath, [apiBuildEntrypoint], {
+    cwd: apiServerRoot,
+    env: { ...process.env, NODE_ENV: "production" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let output = "";
+  const appendOutput = (chunk: Buffer | string) => {
+    output += chunk.toString();
+  };
+  child.stdout?.on("data", appendOutput);
+  child.stderr?.on("data", appendOutput);
+
+  const result = await new Promise<{
+    code: number | null;
+    signal: NodeJS.Signals | null;
+    error?: Error;
+  }>((resolve) => {
+    child.once("error", (error) => resolve({ code: null, signal: null, error }));
+    child.once("exit", (code, signal) => resolve({ code, signal }));
+  });
+
+  if (result.error || result.code !== 0) {
+    throw new Error(
+      `API bundle build failed (code=${result.code}, signal=${result.signal}).\n${result.error?.message ?? output}`,
+    );
+  }
 }
 
 function recencyWarningRecords(output: string) {
@@ -429,6 +468,32 @@ test("API startup warns once for invalid freshness settings and stays quiet othe
 
   assert.equal(recencyWarningRecords(await runApiEntrypoint()).length, 0);
   assert.equal(recencyWarningRecords(await runApiEntrypoint("14")).length, 0);
+});
+
+test("bundled API startup matches source freshness warning behavior", { concurrency: false }, async () => {
+  await buildApiBundle();
+
+  const scenarios = [
+    { name: "invalid", value: "0", warningCount: 1 },
+    { name: "missing", value: undefined, warningCount: 0 },
+    { name: "valid", value: "14", warningCount: 0 },
+  ] as const;
+
+  for (const scenario of scenarios) {
+    const sourceWarnings = recencyWarningRecords(await runApiEntrypoint(scenario.value));
+    const bundledWarnings = recencyWarningRecords(await runBundledApiEntrypoint(scenario.value));
+
+    assert.equal(
+      sourceWarnings.length,
+      scenario.warningCount,
+      `source entrypoint warning count mismatch for ${scenario.name}`,
+    );
+    assert.deepEqual(
+      bundledWarnings,
+      sourceWarnings,
+      `bundled entrypoint warning records mismatch for ${scenario.name}`,
+    );
+  }
 });
 
 test("health degrades after consecutive failures", () => {
