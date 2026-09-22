@@ -11,21 +11,38 @@ import { formatCurrency, formatDate } from "@/lib/utils"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { AlertCircle } from "lucide-react"
 
+const SOLD_COMP_MARKET_PRESETS = [
+  { value: "EBAY_US", label: "eBay US" },
+]
+const SOLD_COMP_MARKET_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/
+
 export default function HistoryPage() {
   const [query, setQuery] = useState("")
   const [submittedQuery, setSubmittedQuery] = useState("")
+  const [market, setMarket] = useState("")
+  const [submittedMarket, setSubmittedMarket] = useState("")
   const [activeTab, setActiveTab] = useState("sold-comps")
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault()
-    if (query.trim()) {
-      setSubmittedQuery(query.trim())
-    }
+    const nextQuery = query.trim()
+    const nextMarket = market.trim()
+    if (!nextQuery || (nextMarket && !SOLD_COMP_MARKET_KEY_PATTERN.test(nextMarket))) return
+
+    setSubmittedQuery(nextQuery)
+    setSubmittedMarket(nextMarket)
   }
 
+  const submittedMarketKey = submittedMarket || undefined
+  const soldCompsParams = {
+    q: submittedQuery,
+    ...(submittedMarketKey ? { market: submittedMarketKey } : {}),
+  }
+  const marketKeyIsValid = !market.trim() || SOLD_COMP_MARKET_KEY_PATTERN.test(market.trim())
+
   const { data: compsData, isLoading: isLoadingComps } = useGetSoldComps(
-    { q: submittedQuery },
-    { query: { enabled: !!submittedQuery && activeTab === "sold-comps", queryKey: getGetSoldCompsQueryKey({ q: submittedQuery }) } }
+    soldCompsParams,
+    { query: { enabled: !!submittedQuery && activeTab === "sold-comps", queryKey: getGetSoldCompsQueryKey(soldCompsParams) } }
   )
 
   const { data: historyData, isLoading: isLoadingHistory } = useGetPriceHistory(
@@ -43,17 +60,53 @@ export default function HistoryPage() {
         
         <Card className="bg-card">
           <CardContent className="p-6">
-            <form onSubmit={handleSearch} className="flex gap-4">
-              <div className="flex-1 relative">
+            <form onSubmit={handleSearch} className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(14rem,0.4fr)_auto] md:items-end">
+              <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input 
+                  aria-label="検索語"
                   placeholder="製品名、JANコード、または識別子を入力..." 
                   className="pl-9 bg-background"
+                  data-testid="input-history-query"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                 />
               </div>
-              <Button type="submit" disabled={!query || isLoadingComps || isLoadingHistory}>
+              <div className="space-y-2">
+                <label htmlFor="history-market" className="text-sm font-medium">
+                  市場キー (任意)
+                </label>
+                <Input
+                  id="history-market"
+                  aria-describedby="history-market-help"
+                  aria-invalid={!marketKeyIsValid}
+                  autoComplete="off"
+                  data-testid="input-history-market"
+                  list="history-market-options"
+                  maxLength={64}
+                  placeholder="例: EBAY_US"
+                  value={market}
+                  onChange={(e) => setMarket(e.target.value)}
+                />
+                <datalist id="history-market-options">
+                  {SOLD_COMP_MARKET_PRESETS.map((preset) => (
+                    <option key={preset.value} value={preset.value} label={preset.label} />
+                  ))}
+                </datalist>
+                <p id="history-market-help" className="text-xs text-muted-foreground">
+                  プリセットから選ぶか入力。未入力なら全体設定を使用
+                </p>
+                {!marketKeyIsValid && (
+                  <p className="text-xs text-destructive">
+                    英数字、ハイフン、アンダースコア、ピリオドで入力してください
+                  </p>
+                )}
+              </div>
+              <Button
+                type="submit"
+                data-testid="button-history-search"
+                disabled={!query.trim() || !marketKeyIsValid || isLoadingComps || isLoadingHistory}
+              >
                 {(isLoadingComps || isLoadingHistory) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 実績検索
               </Button>
@@ -78,6 +131,20 @@ export default function HistoryPage() {
                     </AlertDescription>
                   </Alert>
                 )}
+                <Card className="border-dashed">
+                  <CardContent className="flex flex-wrap items-center gap-x-4 gap-y-1 p-4 text-sm">
+                    <span className="font-medium">鮮度ポリシー</span>
+                    <span data-testid="text-sold-comps-market" className="font-mono">
+                      市場: {submittedMarket || "グローバル設定"}
+                    </span>
+                    <span className="text-muted-foreground">
+                      有効期間:{" "}
+                      <strong data-testid="text-sold-comps-freshness-window" className="font-medium text-foreground">
+                        {compsData.freshness.recent_window_days}日
+                      </strong>
+                    </span>
+                  </CardContent>
+                </Card>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <Card>
                   <CardContent className="p-6">
