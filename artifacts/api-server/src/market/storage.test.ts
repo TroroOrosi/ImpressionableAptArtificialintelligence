@@ -19,7 +19,7 @@ function databaseUrlFor(databaseName: string) {
 }
 
 function runFixture(
-  mode: "setup" | "write" | "cleanup" | "read",
+  mode: "setup" | "write" | "write-mixed-market" | "cleanup" | "read" | "read-mixed-market",
   databaseUrl: string,
   marker: string,
 ) {
@@ -131,6 +131,52 @@ test("market records survive a fresh storage and core instance", {
     if (databaseCreated) {
       await pool.query(`DROP DATABASE ${quoteIdentifier(databaseName)} WITH (FORCE)`);
     }
-    await pool.end();
   }
+});
+
+test("stored sold comps filter sources before applying the limit", {
+  concurrency: false,
+  skip: !process.env.DATABASE_URL,
+}, async () => {
+  const { pool } = await import("@workspace/db");
+  const marker = `market_mixed_${process.pid}_${Date.now()}_${randomUUID().replaceAll("-", "").slice(0, 8)}`;
+  const databaseName = `${marker}_db`;
+  let databaseCreated = false;
+
+  try {
+    await pool.query(`CREATE DATABASE ${quoteIdentifier(databaseName)}`);
+    databaseCreated = true;
+    const databaseUrl = databaseUrlFor(databaseName);
+
+    runFixture("setup", databaseUrl, marker);
+    runFixture("write-mixed-market", databaseUrl, marker);
+    const persisted = parseFixtureJson(runFixture("read-mixed-market", databaseUrl, marker)) as {
+      filtered: Array<Record<string, unknown>>;
+      filteredStatus: string;
+      merged: Array<Record<string, unknown>>;
+      mergedStatus: string;
+    };
+
+    assert.equal(persisted.filteredStatus, "available");
+    assert.deepEqual(persisted.filtered.map((comp) => comp.source), ["ebay"]);
+    assert.equal(persisted.filtered[0]?.title, `Mixed market ${marker} ebay-older`);
+
+    assert.equal(persisted.mergedStatus, "available");
+    assert.deepEqual(persisted.merged.map((comp) => comp.source), [
+      "stockx",
+      "stockx",
+      "ebay",
+      "ebay",
+    ]);
+  } finally {
+    if (databaseCreated) {
+      await pool.query(`DROP DATABASE ${quoteIdentifier(databaseName)} WITH (FORCE)`);
+    }
+  }
+});
+
+test.after(async () => {
+  if (!process.env.DATABASE_URL) return;
+  const { pool } = await import("@workspace/db");
+  await pool.end();
 });

@@ -1,6 +1,14 @@
+import { execFileSync, spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { createServer } from "node:net";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import assert from "node:assert/strict";
 import app from "../app";
+
+const fixtureScript = fileURLToPath(new URL("../market/persistence-fixture.ts", import.meta.url));
+const apiServerRoot = join(dirname(fixtureScript), "../..");
 
 async function withServer(run: (base: string) => Promise<void>) {
   const server = app.listen(0);
@@ -9,6 +17,125 @@ async function withServer(run: (base: string) => Promise<void>) {
   if (!address || typeof address === "string") throw new Error("test server unavailable");
   try { await run(`http://127.0.0.1:${address.port}/api`); }
   finally { await new Promise<void>((resolve) => server.close(() => resolve())); }
+}
+
+function databaseUrlFor(databaseName: string) {
+  const url = new URL(process.env.DATABASE_URL || "");
+  url.pathname = `/${databaseName}`;
+  return url.toString();
+}
+
+function runFixture(
+  mode: "create-database" | "drop-database" | "setup" | "write-mixed-market",
+  databaseUrl: string,
+  marker: string,
+  databaseName?: string,
+) {
+  return execFileSync(
+    process.execPath,
+    ["--import", "tsx", fixtureScript, mode],
+    {
+      cwd: apiServerRoot,
+      env: {
+        ...process.env,
+        DATABASE_URL: databaseUrl,
+        MARKET_TEST_MARKER: marker,
+        ...(databaseName ? { MARKET_TEST_DATABASE_NAME: databaseName } : {}),
+      },
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  ).trim();
+}
+
+async function findAvailablePort() {
+  const server = createServer();
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    server.close();
+    throw new Error("Could not determine the API test port");
+  }
+  const port = address.port;
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  });
+  return port;
+}
+
+async function withApiProcess(
+  databaseUrl: string,
+  disabledProviderEnvNames: readonly string[],
+  run: (base: string) => Promise<void>,
+) {
+  const port = await findAvailablePort();
+  const entrypoint = fileURLToPath(new URL("../index.ts", import.meta.url));
+  const childEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    DATABASE_URL: databaseUrl,
+    NODE_ENV: "production",
+    LOG_LEVEL: "info",
+    PORT: String(port),
+  };
+  for (const name of disabledProviderEnvNames) delete childEnv[name];
+
+  const child = spawn(process.execPath, ["--import", "tsx", entrypoint], {
+    cwd: apiServerRoot,
+    env: childEnv,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (!child.stdout || !child.stderr) {
+    child.kill("SIGTERM");
+    throw new Error("Could not capture API startup output");
+  }
+
+  let output = "";
+  const appendOutput = (chunk: Buffer | string) => {
+    output += chunk.toString();
+  };
+  child.stdout.on("data", appendOutput);
+  child.stderr.on("data", appendOutput);
+
+  const started = new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error(`API did not start within the timeout\n${output}`));
+    }, 5_000);
+    const checkOutput = () => {
+      if (output.includes('"msg":"Server listening"')) {
+        clearTimeout(timeout);
+        resolve();
+      }
+    };
+    child.stdout?.on("data", checkOutput);
+    child.stderr?.on("data", checkOutput);
+    child.once("exit", (code, signal) => {
+      clearTimeout(timeout);
+      reject(new Error(`API exited before startup (code=${code}, signal=${signal})\n${output}`));
+    });
+    child.once("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+  });
+  const exit = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+
+  try {
+    await started;
+    await run(`http://127.0.0.1:${port}/api`);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+    const exited = await Promise.race([
+      exit.then(() => true),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 1_000)),
+    ]);
+    if (!exited) {
+      child.kill("SIGKILL");
+      await exit;
+    }
+  }
 }
 
 test("public GET endpoint schemas remain stable", () => withServer(async (base) => {
@@ -278,6 +405,70 @@ test("sold comps market routing excludes unsupported providers and preserves omi
     }
   }
 }));
+
+test("sold comps route filters persisted market history before applying the limit", {
+  concurrency: false,
+  skip: !process.env.DATABASE_URL,
+}, async () => {
+  const savedDatabaseUrl = process.env.DATABASE_URL;
+  if (!savedDatabaseUrl) return;
+
+  const marker = `market_route_${process.pid}_${Date.now()}_${randomUUID().replaceAll("-", "").slice(0, 8)}`;
+  const databaseName = `${marker}_db`;
+  const databaseUrl = databaseUrlFor(databaseName);
+  const providerEnvNames = [
+    "EBAY_CLIENT_ID",
+    "EBAY_CLIENT_SECRET",
+    "EBAY_ACCESS_TOKEN",
+    "STOCKX_API_KEY",
+    "STOCKX_ACCESS_TOKEN",
+    "STOCKX_REFRESH_TOKEN",
+    "STOCKX_CLIENT_ID",
+    "STOCKX_CLIENT_SECRET",
+  ];
+  let databaseCreated = false;
+
+  try {
+    runFixture("create-database", savedDatabaseUrl, marker, databaseName);
+    databaseCreated = true;
+    runFixture("setup", databaseUrl, marker);
+    runFixture("write-mixed-market", databaseUrl, marker);
+
+    await withApiProcess(databaseUrl, providerEnvNames, async (base) => {
+      const supported = await fetch(
+        `${base}/v1/sold-comps?q=${encodeURIComponent(marker)}&limit=1&market=EBAY_US`,
+      );
+      assert.equal(supported.status, 200);
+      const supportedBody = await supported.json() as {
+        comps: Array<{ source: string; title: string }>;
+        persistence_status: string;
+      };
+      assert.equal(supportedBody.persistence_status, "available");
+      assert.deepEqual(supportedBody.comps.map((comp) => comp.source), ["ebay"]);
+      assert.equal(supportedBody.comps[0]?.title, `Mixed market ${marker} ebay-older`);
+
+      const omitted = await fetch(
+        `${base}/v1/sold-comps?q=${encodeURIComponent(marker)}&limit=10`,
+      );
+      assert.equal(omitted.status, 200);
+      const omittedBody = await omitted.json() as {
+        comps: Array<{ source: string }>;
+        persistence_status: string;
+      };
+      assert.equal(omittedBody.persistence_status, "available");
+      assert.deepEqual(omittedBody.comps.map((comp) => comp.source), [
+        "stockx",
+        "stockx",
+        "ebay",
+        "ebay",
+      ]);
+    });
+  } finally {
+    if (databaseCreated) {
+      runFixture("drop-database", savedDatabaseUrl, marker, databaseName);
+    }
+  }
+});
 
 test("sold comps freshness reports missing evidence when no sales are available", { concurrency: false }, () => withServer(async (base) => {
   const savedDatabaseUrl = process.env.DATABASE_URL;

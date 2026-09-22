@@ -25,6 +25,18 @@ function requiredMarker() {
   return value;
 }
 
+function requiredDatabaseName() {
+  const value = process.env.MARKET_TEST_DATABASE_NAME?.trim();
+  if (!value || !/^[a-z0-9_]+$/.test(value)) {
+    throw new Error("MARKET_TEST_DATABASE_NAME must contain only lowercase letters, numbers, and underscores");
+  }
+  return value;
+}
+
+function quoteIdentifier(value: string) {
+  return `"${value.replaceAll(`"`, `""`)}"`;
+}
+
 const marker = requiredMarker();
 
 const observation: Observation = {
@@ -149,6 +161,57 @@ async function writeRecords() {
   });
 }
 
+async function writeMixedMarketRecords() {
+  const day = 24 * 60 * 60 * 1_000;
+  const now = Date.now();
+  const inputs = [
+    {
+      suffix: "stockx-newest",
+      source: "stockx",
+      soldAt: new Date(now - day).toISOString(),
+      soldPrice: "210",
+    },
+    {
+      suffix: "stockx-new",
+      source: "stockx",
+      soldAt: new Date(now - 2 * day).toISOString(),
+      soldPrice: "200",
+    },
+    {
+      suffix: "ebay-older",
+      source: "ebay",
+      soldAt: new Date(now - 3 * day).toISOString(),
+      soldPrice: "110",
+    },
+    {
+      suffix: "ebay-oldest",
+      source: "ebay",
+      soldAt: new Date(now - 4 * day).toISOString(),
+      soldPrice: "100",
+    },
+  ];
+
+  const inserted = await persistSoldComps(inputs.map((item) => ({
+    query: marker,
+    title: `Mixed market ${marker} ${item.suffix}`,
+    soldPrice: item.soldPrice,
+    currency: "USD",
+    soldAt: item.soldAt,
+    source: item.source,
+    condition: "used",
+    url: `https://example.com/${marker}/${item.suffix}`,
+    providerItemId: `${marker}-${item.suffix}`,
+    identity: {
+      model: marker,
+      market: item.source,
+    },
+  })));
+
+  if (inserted.accepted !== inputs.length) {
+    throw new Error(`Expected ${inputs.length} mixed-market sold comps, inserted ${inserted.accepted}`);
+  }
+}
+
 async function seedOldRecordsAndCleanup() {
   await db.execute(sql`
     INSERT INTO market_observations (
@@ -219,15 +282,45 @@ async function readRecords() {
   }));
 }
 
+async function readMixedMarketRecords() {
+  const [filtered, merged] = await Promise.all([
+    getStoredSoldComps(marker, 1, ["ebay"]),
+    getStoredSoldComps(marker, 10),
+  ]);
+
+  console.log(JSON.stringify({
+    filtered: filtered.records,
+    filteredStatus: filtered.status,
+    merged: merged.records,
+    mergedStatus: merged.status,
+  }));
+}
+
+async function createDatabase() {
+  await db.execute(sql.raw(`CREATE DATABASE ${quoteIdentifier(requiredDatabaseName())}`));
+}
+
+async function dropDatabase() {
+  await db.execute(sql.raw(`DROP DATABASE ${quoteIdentifier(requiredDatabaseName())} WITH (FORCE)`));
+}
+
 try {
-  if (mode === "setup") {
+  if (mode === "create-database") {
+    await createDatabase();
+  } else if (mode === "drop-database") {
+    await dropDatabase();
+  } else if (mode === "setup") {
     await createTables();
   } else if (mode === "write") {
     await writeRecords();
+  } else if (mode === "write-mixed-market") {
+    await writeMixedMarketRecords();
   } else if (mode === "cleanup") {
     await seedOldRecordsAndCleanup();
   } else if (mode === "read") {
     await readRecords();
+  } else if (mode === "read-mixed-market") {
+    await readMixedMarketRecords();
   } else {
     throw new Error(`Unknown persistence fixture mode: ${mode || "(missing)"}`);
   }
