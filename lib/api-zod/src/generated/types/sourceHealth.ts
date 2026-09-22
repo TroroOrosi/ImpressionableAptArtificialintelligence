@@ -5,6 +5,7 @@
  * Market Intel MCP API
  * OpenAPI spec version: 1.0.0
  */
+import type { SourceHealthLastErrorType } from './sourceHealthLastErrorType';
 
 export interface SourceHealth {
   id: string;
@@ -19,6 +20,8 @@ export interface SourceHealth {
   last_success_at?: string | null;
   /** @nullable */
   last_error?: string | null;
+  /** @nullable */
+  last_error_type: SourceHealthLastErrorType;
   latency_ms: number;
   consecutive_failures: number;
 }

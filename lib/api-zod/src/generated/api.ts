@@ -216,6 +216,7 @@ export const GetSourceHealthResponseItem = zod.object({
   "identity_success_rate": zod.number(),
   "last_success_at": zod.string().nullish(),
   "last_error": zod.string().nullish(),
+  "last_error_type": zod.union([zod.literal('timeout'),zod.literal('authentication'),zod.literal('rate_limit'),zod.literal('network'),zod.literal('invalid_response'),zod.literal('configuration'),zod.literal('http'),zod.literal('unknown'),zod.literal(null)]).nullable(),
   "latency_ms": zod.number().int(),
   "consecutive_failures": zod.number().int()
 })

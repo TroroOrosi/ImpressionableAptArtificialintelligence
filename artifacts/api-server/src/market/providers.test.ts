@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { availableProviderIds, availableSoldProviderIds, searchMarket, searchSoldComps } from "./providers";
+import { availableProviderIds, availableSoldProviderIds, searchMarket, searchSoldComps, sourceHealth } from "./providers";
 
 const providerEnv = [
   "YAHOO_CLIENT_ID",
@@ -108,6 +108,99 @@ test("official adapters normalize product and auction observations in priority o
     assert.equal(auctions.results[0]?.observations[0]?.source, "ebay");
     assert.ok((auctions.results[0]?.observations[0]?.remaining_seconds || 0) > 0);
     assert.ok(calls.some((url) => url.includes("filter=buyingOptions%3A%7BAUCTION%7D")));
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreProviderEnv(savedEnv);
+  }
+});
+
+test("provider failures fall through the priority chain and recover without retries", { concurrency: false }, async () => {
+  const savedEnv = saveProviderEnv();
+  const originalFetch = globalThis.fetch;
+  const failureCases = [
+    { name: "timeout", status: 0, error: "timeout", errorType: "timeout" },
+    { name: "401", status: 401, error: "http_401", errorType: "authentication" },
+    { name: "403", status: 403, error: "http_403", errorType: "authentication" },
+    { name: "429", status: 429, error: "http_429", errorType: "rate_limit" },
+  ] as const;
+
+  try {
+    for (const failureCase of failureCases) {
+      clearProviderEnv();
+      process.env.YAHOO_CLIENT_ID = "test-yahoo";
+      process.env.RAKUTEN_APP_ID = "test-rakuten";
+
+      const calls: string[] = [];
+      globalThis.fetch = (async (input: string | URL) => {
+        const url = String(input);
+        calls.push(url);
+        if (url.includes("shopping.yahooapis.jp")) {
+          if (failureCase.name === "timeout") {
+            throw Object.assign(new Error("The operation timed out"), { name: "TimeoutError" });
+          }
+          return jsonResponse({}, failureCase.status);
+        }
+        if (url.includes("app.rakuten.co.jp")) {
+          return jsonResponse({
+            Items: [{
+              Item: {
+                itemName: "Fallback camera",
+                itemPrice: 12345,
+                itemUrl: "https://store.example/rakuten-fallback-camera",
+                jan: "4900000000001",
+              },
+            }],
+          });
+        }
+        throw new Error(`Unexpected test URL: ${url}`);
+      }) as typeof fetch;
+
+      const response = await searchMarket("camera", "products", 10);
+      assert.deepEqual(response.providers_queried, ["yahoo-shopping", "rakuten"]);
+      assert.equal(response.results.length, 1);
+      assert.equal(response.results[0]?.observations[0]?.source, "rakuten");
+      assert.equal(response.results[0]?.observations[0]?.value, 12345);
+      assert.equal(calls.filter((url) => url.includes("shopping.yahooapis.jp")).length, 1);
+      assert.equal(calls.filter((url) => url.includes("app.rakuten.co.jp")).length, 1);
+
+      const failedHealth = (await sourceHealth()).find((provider) => provider.id === "yahoo-shopping");
+      assert.equal(failedHealth?.last_error, failureCase.error);
+      assert.equal(failedHealth?.last_error_type, failureCase.errorType);
+      assert.ok((failedHealth?.consecutive_failures || 0) > 0);
+    }
+
+    globalThis.fetch = (async (input: string | URL) => {
+      const url = String(input);
+      if (url.includes("shopping.yahooapis.jp")) {
+        return jsonResponse({
+          hits: [{
+            name: "Recovered camera",
+            price: 54321,
+            url: "https://store.example/yahoo-recovered-camera",
+            code: { jan: "4900000000002" },
+          }],
+        });
+      }
+      if (url.includes("app.rakuten.co.jp")) {
+        return jsonResponse({
+          Items: [{
+            Item: {
+              itemName: "Fallback camera",
+              itemPrice: 12345,
+              itemUrl: "https://store.example/rakuten-fallback-camera",
+              jan: "4900000000001",
+            },
+          }],
+        });
+      }
+      throw new Error(`Unexpected test URL: ${url}`);
+    }) as typeof fetch;
+
+    await searchMarket("camera", "products", 10);
+    const recoveredHealth = (await sourceHealth()).find((provider) => provider.id === "yahoo-shopping");
+    assert.equal(recoveredHealth?.last_error, null);
+    assert.equal(recoveredHealth?.last_error_type, null);
+    assert.equal(recoveredHealth?.consecutive_failures, 0);
   } finally {
     globalThis.fetch = originalFetch;
     restoreProviderEnv(savedEnv);

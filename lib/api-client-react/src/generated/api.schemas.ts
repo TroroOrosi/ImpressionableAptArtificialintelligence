@@ -110,6 +110,23 @@ export interface SearchResponse {
   discovery?: DiscoveryResult[];
 }
 
+/**
+ * @nullable
+ */
+export type SourceHealthLastErrorType = typeof SourceHealthLastErrorType[keyof typeof SourceHealthLastErrorType] | null;
+
+
+export const SourceHealthLastErrorType = {
+  timeout: 'timeout',
+  authentication: 'authentication',
+  rate_limit: 'rate_limit',
+  network: 'network',
+  invalid_response: 'invalid_response',
+  configuration: 'configuration',
+  http: 'http',
+  unknown: 'unknown',
+} as const;
+
 export interface SourceHealth {
   id: string;
   label: string;
@@ -123,6 +140,8 @@ export interface SourceHealth {
   last_success_at?: string | null;
   /** @nullable */
   last_error?: string | null;
+  /** @nullable */
+  last_error_type: SourceHealthLastErrorType;
   latency_ms: number;
   consecutive_failures: number;
 }

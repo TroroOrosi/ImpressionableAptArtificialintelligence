@@ -225,7 +225,7 @@ components:
         snippet: { type: string }
     SourceHealth:
       type: object
-      required: [id, label, tier, configured, available, success_rate, price_success_rate, identity_success_rate, latency_ms, consecutive_failures]
+      required: [id, label, tier, configured, available, success_rate, price_success_rate, identity_success_rate, last_error_type, latency_ms, consecutive_failures]
       properties:
         id: { type: string }
         label: { type: string }
@@ -237,6 +237,7 @@ components:
         identity_success_rate: { type: number }
         last_success_at: { type: ["string", "null"] }
         last_error: { type: ["string", "null"] }
+        last_error_type: { type: ["string", "null"], enum: [timeout, authentication, rate_limit, network, invalid_response, configuration, http, unknown, null] }
         latency_ms: { type: integer }
         consecutive_failures: { type: integer }
     CoverageSource:

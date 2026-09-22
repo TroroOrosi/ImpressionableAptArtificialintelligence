@@ -14,11 +14,22 @@ export type VerificationResult = {
   observations: Observation[];
   checked_at: string;
 };
+export type ProviderFailureType =
+  | "timeout"
+  | "authentication"
+  | "rate_limit"
+  | "network"
+  | "invalid_response"
+  | "configuration"
+  | "http"
+  | "unknown";
+
 export type ProviderHealthOutcome = {
   ok: boolean;
   latencyMs: number;
   observations: number;
   error?: string;
+  failureType?: ProviderFailureType;
 };
 export type Evidence = {
   value: number; currency: string; fetched_at: string; freshness_seconds: number;
@@ -199,10 +210,12 @@ export async function recordProviderHealth(
     current.consecutiveFailures = 0;
     current.lastSuccessAt = new Date().toISOString();
     current.lastError = null;
+    current.lastErrorType = null;
   } else {
     current.failures += 1;
     current.consecutiveFailures += 1;
     current.lastError = outcome.error || "provider_request_failed";
+    current.lastErrorType = outcome.failureType || providerFailureTypeFromError(current.lastError);
   }
   providerHealth.set(providerId, current);
   await persistProviderHealth(providerId, outcome);
@@ -263,6 +276,20 @@ export type SearchResponse = {
   generated_at: string;
   discovery?: DiscoveryResult[];
 };
+
+export function providerFailureTypeFromError(error: string | null | undefined): ProviderFailureType | null {
+  if (!error) return null;
+  if (error === "timeout") return "timeout";
+  if (error === "http_401" || error === "http_403") return "authentication";
+  if (error === "http_429") return "rate_limit";
+  if (error === "network_error") return "network";
+  if (error === "invalid_json") return "invalid_response";
+  if (error === "missing_credential" || error === "token_missing" || error === "unsupported_sold_marketplace") {
+    return "configuration";
+  }
+  if (error.startsWith("http_")) return "http";
+  return "unknown";
+}
 
 function quantile(values: number[], percentile: number) {
   if (!values.length) return null;
@@ -425,6 +452,7 @@ const emptyProviderHealth = (): ProviderHealth => ({
   observations: 0,
   lastSuccessAt: null,
   lastError: null,
+  lastErrorType: null,
   lastLatencyMs: 0,
   consecutiveFailures: 0,
 });
@@ -478,7 +506,10 @@ function defaultConfidence(sourceTier: number) {
 
 export function getProviderHealth(providerId: string) {
   const current = providerHealth.get(providerId) || emptyProviderHealth();
-  return { ...current };
+  return {
+    ...current,
+    lastErrorType: current.lastErrorType || providerFailureTypeFromError(current.lastError),
+  };
 }
 
 let providerHealthHydration: Promise<void> | undefined;
@@ -486,7 +517,10 @@ let providerHealthHydration: Promise<void> | undefined;
 export async function ensureProviderHealthLoaded() {
   providerHealthHydration ??= loadStoredProviderHealth().then((stored) => {
     for (const [providerId, metrics] of stored) {
-      providerHealth.set(providerId, metrics);
+      providerHealth.set(providerId, {
+        ...metrics,
+        lastErrorType: providerFailureTypeFromError(metrics.lastError),
+      });
     }
   });
   await providerHealthHydration;
@@ -499,6 +533,7 @@ type ProviderHealth = {
   observations: number;
   lastSuccessAt: string | null;
   lastError: string | null;
+  lastErrorType: ProviderFailureType | null;
   lastLatencyMs: number;
   consecutiveFailures: number;
 };

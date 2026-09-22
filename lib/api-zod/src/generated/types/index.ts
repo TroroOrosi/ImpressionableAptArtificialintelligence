@@ -32,6 +32,7 @@ export * from './soldCompInputIdentity';
 export * from './soldCompInputShipping';
 export * from './soldCompsResult';
 export * from './sourceHealth';
+export * from './sourceHealthLastErrorType';
 export * from './verificationResult';
 export * from './verificationResultStatus';
 export * from './verifyCurrentPriceParams';

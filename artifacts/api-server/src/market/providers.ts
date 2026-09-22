@@ -5,12 +5,14 @@ import {
   isProviderConfigured,
   normalizeDiscovery,
   normalizeObservation,
+  providerFailureTypeFromError,
   providerRegistry,
   recordProviderHealth,
   type DiscoveryResult,
   type Identity,
   type MarketMode,
   type Observation,
+  type ProviderFailureType,
   type ProviderSearchResult,
   type SearchResponse,
   type SoldCompRecord,
@@ -43,12 +45,16 @@ const REQUEST_TIMEOUT_MS = 12_000;
 const EBAY_SOLD_MARKETPLACE_IDS = new Set(["EBAY_US"]);
 
 class ProviderRequestError extends Error {
+  readonly failureType: ProviderFailureType;
+
   constructor(
     readonly providerId: string,
     readonly code: string,
+    failureType = providerFailureTypeFromError(code) || "unknown",
   ) {
     super(code);
     this.name = "ProviderRequestError";
+    this.failureType = failureType;
   }
 }
 
@@ -187,8 +193,8 @@ async function fetchJson(providerId: string, url: string, init?: RequestInit): P
       redirect: "follow",
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
-  } catch {
-    throw new ProviderRequestError(providerId, "network_error");
+  } catch (error) {
+    throw new ProviderRequestError(providerId, isTimeoutError(error) ? "timeout" : "network_error");
   }
 
   if (!response.ok) throw new ProviderRequestError(providerId, `http_${response.status}`);
@@ -197,6 +203,10 @@ async function fetchJson(providerId: string, url: string, init?: RequestInit): P
   } catch {
     throw new ProviderRequestError(providerId, "invalid_json");
   }
+}
+
+function isTimeoutError(error: unknown) {
+  return isRecord(error) && (error.name === "TimeoutError" || error.name === "AbortError");
 }
 
 async function searchYahoo(context: SearchContext): Promise<ProviderSearchResult> {
@@ -642,11 +652,15 @@ export async function searchMarket(query: string, mode: MarketMode, limit = 20):
         observations: result.observations.length,
       });
     } catch (error) {
+      const errorCode = error instanceof ProviderRequestError ? error.code : "provider_request_failed";
       await recordProviderHealth(providerId, {
         ok: false,
         latencyMs: Date.now() - startedAt,
         observations: 0,
-        error: error instanceof ProviderRequestError ? error.code : "provider_request_failed",
+        error: errorCode,
+        failureType: error instanceof ProviderRequestError
+          ? error.failureType
+          : providerFailureTypeFromError(errorCode) || "unknown",
       });
     }
   }
@@ -679,11 +693,15 @@ export async function searchSoldComps(query: string, limit = 20): Promise<SoldCo
         observations: providerComps.length,
       });
     } catch (error) {
+      const errorCode = error instanceof ProviderRequestError ? error.code : "provider_request_failed";
       await recordProviderHealth(providerId, {
         ok: false,
         latencyMs: Date.now() - startedAt,
         observations: 0,
-        error: error instanceof ProviderRequestError ? error.code : "provider_request_failed",
+        error: errorCode,
+        failureType: error instanceof ProviderRequestError
+          ? error.failureType
+          : providerFailureTypeFromError(errorCode) || "unknown",
       });
     }
   }
@@ -710,6 +728,7 @@ export async function sourceHealth() {
       identity_success_rate: attempts && metrics.observations ? successRate : 0,
       last_success_at: metrics.lastSuccessAt,
       last_error: !configured ? "optional credential missing" : !available ? "adapter unavailable" : metrics.lastError,
+      last_error_type: !configured || !available ? "configuration" : metrics.lastErrorType,
       latency_ms: metrics.lastLatencyMs,
       consecutive_failures: metrics.consecutiveFailures,
     };
