@@ -5,9 +5,11 @@ import {
   compareIdentity,
   computeCoverage,
   buildSoldCompsResponse,
+  getSoldCompRecencyDays,
   isActionable,
   providerRegistry,
   summarizeSoldCompsFreshness,
+  SOLD_COMP_RECENCY_DAYS,
   verifyEvidence,
 } from "./core";
 
@@ -103,7 +105,7 @@ test("sold comps normalize conservative value around fees and reject outliers", 
   assert.equal(response.liquidity, "medium");
 });
 
-test("sold comp freshness distinguishes missing, recent, and stale evidence", () => {
+test("sold comp freshness distinguishes missing, recent, and stale evidence", { concurrency: false }, () => {
   const now = new Date("2026-09-22T00:00:00.000Z");
   const comp = (soldAt: string) => ({
     title: "Used camera",
@@ -117,33 +119,80 @@ test("sold comp freshness distinguishes missing, recent, and stale evidence", ()
     identity: {},
   });
 
-  assert.deepEqual(summarizeSoldCompsFreshness([], now), {
-    status: "missing",
-    recent_count: 0,
-    stale_count: 0,
-    missing_count: 0,
-    latest_sold_at: null,
-    oldest_sold_at: null,
-  });
-  assert.equal(
-    summarizeSoldCompsFreshness([comp("2026-09-20T00:00:00.000Z")], now).status,
-    "recent",
-  );
-  assert.equal(
-    summarizeSoldCompsFreshness([comp("2026-08-01T00:00:00.000Z")], now).status,
-    "stale",
-  );
-  assert.deepEqual(
-    summarizeSoldCompsFreshness([comp("not-a-date")], now),
-    {
+  const savedRecencyDays = process.env.SOLD_COMP_RECENCY_DAYS;
+  try {
+    delete process.env.SOLD_COMP_RECENCY_DAYS;
+    assert.deepEqual(summarizeSoldCompsFreshness([], now), {
       status: "missing",
+      recent_window_days: SOLD_COMP_RECENCY_DAYS,
       recent_count: 0,
       stale_count: 0,
-      missing_count: 1,
+      missing_count: 0,
       latest_sold_at: null,
       oldest_sold_at: null,
-    },
-  );
+    });
+    assert.equal(
+      summarizeSoldCompsFreshness([comp("2026-09-20T00:00:00.000Z")], now).status,
+      "recent",
+    );
+    assert.equal(
+      summarizeSoldCompsFreshness([comp("2026-08-01T00:00:00.000Z")], now).status,
+      "stale",
+    );
+    assert.deepEqual(
+      summarizeSoldCompsFreshness([comp("not-a-date")], now),
+      {
+        status: "missing",
+        recent_window_days: SOLD_COMP_RECENCY_DAYS,
+        recent_count: 0,
+        stale_count: 0,
+        missing_count: 1,
+        latest_sold_at: null,
+        oldest_sold_at: null,
+      },
+    );
+  } finally {
+    if (savedRecencyDays === undefined) delete process.env.SOLD_COMP_RECENCY_DAYS;
+    else process.env.SOLD_COMP_RECENCY_DAYS = savedRecencyDays;
+  }
+});
+
+test("sold comp freshness accepts a bounded setting and falls back for invalid values", { concurrency: false }, () => {
+  const now = new Date("2026-09-22T00:00:00.000Z");
+  const comp = {
+    title: "Used camera",
+    sold_price: 1000,
+    currency: "JPY",
+    sold_at: "2026-09-12T00:00:00.000Z",
+    source: "market-a",
+    normalized_price: 1000,
+    condition: "good",
+    url: "https://example.com/configured-window",
+    identity: {},
+  };
+  const savedRecencyDays = process.env.SOLD_COMP_RECENCY_DAYS;
+  try {
+    process.env.SOLD_COMP_RECENCY_DAYS = "14";
+    assert.equal(getSoldCompRecencyDays(), 14);
+    assert.deepEqual(summarizeSoldCompsFreshness([comp], now), {
+      status: "recent",
+      recent_window_days: 14,
+      recent_count: 1,
+      stale_count: 0,
+      missing_count: 0,
+      latest_sold_at: comp.sold_at,
+      oldest_sold_at: comp.sold_at,
+    });
+
+    for (const invalid of ["0", "366", "14.5", "not-a-number"]) {
+      process.env.SOLD_COMP_RECENCY_DAYS = invalid;
+      assert.equal(getSoldCompRecencyDays(), SOLD_COMP_RECENCY_DAYS);
+      assert.equal(summarizeSoldCompsFreshness([comp], now).recent_window_days, SOLD_COMP_RECENCY_DAYS);
+    }
+  } finally {
+    if (savedRecencyDays === undefined) delete process.env.SOLD_COMP_RECENCY_DAYS;
+    else process.env.SOLD_COMP_RECENCY_DAYS = savedRecencyDays;
+  }
 });
 
 test("health degrades after consecutive failures", () => {

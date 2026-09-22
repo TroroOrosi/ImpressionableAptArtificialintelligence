@@ -9,6 +9,12 @@ import type { SoldCompsFreshnessStatus } from './soldCompsFreshnessStatus';
 
 export interface SoldCompsFreshness {
   status: SoldCompsFreshnessStatus;
+  /**
+     * Effective recent-sale window in days. Set SOLD_COMP_RECENCY_DAYS to an integer from 1 through 365; invalid or missing values use the safe default of 30.
+     * @minimum 1
+     * @maximum 365
+     */
+  recent_window_days: number;
   /** @minimum 0 */
   recent_count: number;
   /** @minimum 0 */

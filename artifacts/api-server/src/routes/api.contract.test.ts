@@ -155,6 +155,7 @@ test("sold comps endpoint returns structured official sales with identity", { co
       persistence_status: string;
       freshness: {
         status: string;
+         recent_window_days: number;
         recent_count: number;
         stale_count: number;
         missing_count: number;
@@ -185,6 +186,7 @@ test("sold comps endpoint returns structured official sales with identity", { co
     assert.equal(body.persistence_status, "unavailable");
     assert.deepEqual(body.freshness, {
       status: "recent",
+      recent_window_days: 30,
       recent_count: 1,
       stale_count: 0,
       missing_count: 0,
@@ -219,6 +221,7 @@ test("sold comps freshness reports missing evidence when no sales are available"
       conservative_value: number | null;
       freshness: {
         status: string;
+        recent_window_days: number;
         recent_count: number;
         stale_count: number;
         missing_count: number;
@@ -230,6 +233,7 @@ test("sold comps freshness reports missing evidence when no sales are available"
     assert.equal(body.conservative_value, null);
     assert.deepEqual(body.freshness, {
       status: "missing",
+      recent_window_days: 30,
       recent_count: 0,
       stale_count: 0,
       missing_count: 0,
@@ -281,6 +285,7 @@ test("sold comps freshness flags old evidence without changing the estimate", { 
       conservative_value: number | null;
       freshness: {
         status: string;
+        recent_window_days: number;
         recent_count: number;
         stale_count: number;
         missing_count: number;
@@ -291,6 +296,7 @@ test("sold comps freshness flags old evidence without changing the estimate", { 
     assert.equal(body.conservative_value, 15000);
     assert.deepEqual(body.freshness, {
       status: "stale",
+      recent_window_days: 30,
       recent_count: 0,
       stale_count: 1,
       missing_count: 0,
@@ -307,6 +313,53 @@ test("sold comps freshness flags old evidence without changing the estimate", { 
     else process.env.EBAY_ACCESS_TOKEN = savedEbayAccessToken;
     if (savedEbayMarketplace === undefined) delete process.env.EBAY_MARKETPLACE_ID;
     else process.env.EBAY_MARKETPLACE_ID = savedEbayMarketplace;
+  }
+}));
+
+test("sold comps route exposes configured freshness window and safe fallback", { concurrency: false }, () => withServer(async (base) => {
+  const savedDatabaseUrl = process.env.DATABASE_URL;
+  const savedRecencyDays = process.env.SOLD_COMP_RECENCY_DAYS;
+  const savedProviderEnv = new Map<string, string | undefined>();
+  const providerEnvNames = [
+    "EBAY_CLIENT_ID",
+    "EBAY_CLIENT_SECRET",
+    "EBAY_ACCESS_TOKEN",
+    "STOCKX_API_KEY",
+    "STOCKX_ACCESS_TOKEN",
+    "STOCKX_REFRESH_TOKEN",
+    "STOCKX_CLIENT_ID",
+    "STOCKX_CLIENT_SECRET",
+  ];
+  for (const name of providerEnvNames) savedProviderEnv.set(name, process.env[name]);
+
+  async function recentWindowDays() {
+    const response = await fetch(`${base}/v1/sold-comps?q=freshness-window&limit=10`);
+    assert.equal(response.status, 200);
+    const body = await response.json() as { freshness: { recent_window_days: number } };
+    return body.freshness.recent_window_days;
+  }
+
+  try {
+    process.env.DATABASE_URL = "";
+    for (const name of providerEnvNames) delete process.env[name];
+
+    delete process.env.SOLD_COMP_RECENCY_DAYS;
+    assert.equal(await recentWindowDays(), 30);
+
+    process.env.SOLD_COMP_RECENCY_DAYS = "14";
+    assert.equal(await recentWindowDays(), 14);
+
+    process.env.SOLD_COMP_RECENCY_DAYS = "0";
+    assert.equal(await recentWindowDays(), 30);
+  } finally {
+    if (savedDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = savedDatabaseUrl;
+    if (savedRecencyDays === undefined) delete process.env.SOLD_COMP_RECENCY_DAYS;
+    else process.env.SOLD_COMP_RECENCY_DAYS = savedRecencyDays;
+    for (const [name, value] of savedProviderEnv) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
   }
 }));
 

@@ -302,6 +302,9 @@ export const GetSoldCompsQueryParams = zod.object({
   "limit": zod.coerce.number().int().min(1).max(getSoldCompsQueryLimitMax).default(getSoldCompsQueryLimitDefault)
 })
 
+export const getSoldCompsResponseFreshnessRecentWindowDaysDefault = 30;
+export const getSoldCompsResponseFreshnessRecentWindowDaysMax = 365;
+
 export const getSoldCompsResponseFreshnessRecentCountMin = 0;
 
 export const getSoldCompsResponseFreshnessStaleCountMin = 0;
@@ -346,6 +349,7 @@ export const GetSoldCompsResponse = zod.object({
   "persistence_status": zod.enum(['available', 'unavailable']),
   "freshness": zod.object({
   "status": zod.enum(['recent', 'stale', 'missing']),
+  "recent_window_days": zod.number().int().min(1).max(getSoldCompsResponseFreshnessRecentWindowDaysMax).default(getSoldCompsResponseFreshnessRecentWindowDaysDefault).describe('Effective recent-sale window in days. Set SOLD_COMP_RECENCY_DAYS to an integer from 1 through 365; invalid or missing values use the safe default of 30.'),
   "recent_count": zod.number().int().min(getSoldCompsResponseFreshnessRecentCountMin),
   "stale_count": zod.number().int().min(getSoldCompsResponseFreshnessStaleCountMin),
   "missing_count": zod.number().int().min(getSoldCompsResponseFreshnessMissingCountMin),

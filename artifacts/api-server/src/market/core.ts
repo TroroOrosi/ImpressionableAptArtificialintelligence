@@ -116,6 +116,7 @@ export type SoldCompRecord = {
 
 export type SoldCompsFreshness = {
   status: "recent" | "stale" | "missing";
+  recent_window_days: number;
   recent_count: number;
   stale_count: number;
   missing_count: number;
@@ -332,7 +333,28 @@ function removePriceOutliers(comps: SoldCompRecord[]) {
   return valid.filter((comp) => comp.normalized_price >= lowerFence && comp.normalized_price <= upperFence);
 }
 
+/**
+ * The safe default for classifying completed sales as recent.
+ *
+ * `SOLD_COMP_RECENCY_DAYS` may override this value with an integer from 1
+ * through 365.
+ * Invalid, missing, or out-of-range values use this default.
+ */
 export const SOLD_COMP_RECENCY_DAYS = 30;
+export const SOLD_COMP_RECENCY_MIN_DAYS = 1;
+export const SOLD_COMP_RECENCY_MAX_DAYS = 365;
+
+export function getSoldCompRecencyDays(rawValue = process.env.SOLD_COMP_RECENCY_DAYS) {
+  const value = rawValue?.trim();
+  if (!value || !/^\d+$/.test(value)) return SOLD_COMP_RECENCY_DAYS;
+
+  const days = Number(value);
+  return Number.isSafeInteger(days)
+    && days >= SOLD_COMP_RECENCY_MIN_DAYS
+    && days <= SOLD_COMP_RECENCY_MAX_DAYS
+    ? days
+    : SOLD_COMP_RECENCY_DAYS;
+}
 
 const millisecondsPerDay = 24 * 60 * 60 * 1_000;
 
@@ -341,7 +363,8 @@ export function summarizeSoldCompsFreshness(
   now = new Date(),
 ): SoldCompsFreshness {
   const nowMs = now.getTime();
-  const recentCutoffMs = nowMs - SOLD_COMP_RECENCY_DAYS * millisecondsPerDay;
+  const recentWindowDays = getSoldCompRecencyDays();
+  const recentCutoffMs = nowMs - recentWindowDays * millisecondsPerDay;
   let recentCount = 0;
   let staleCount = 0;
   let missingCount = 0;
@@ -364,6 +387,7 @@ export function summarizeSoldCompsFreshness(
   const hasDatedSales = recentCount + staleCount > 0;
   return {
     status: !hasDatedSales ? "missing" : staleCount > 0 || missingCount > 0 ? "stale" : "recent",
+    recent_window_days: recentWindowDays,
     recent_count: recentCount,
     stale_count: staleCount,
     missing_count: missingCount,

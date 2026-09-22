@@ -289,9 +289,15 @@ components:
         identity: { $ref: "#/components/schemas/ProductIdentity" }
     SoldCompsFreshness:
       type: object
-      required: [status, recent_count, stale_count, missing_count, latest_sold_at, oldest_sold_at]
+      required: [status, recent_window_days, recent_count, stale_count, missing_count, latest_sold_at, oldest_sold_at]
       properties:
         status: { type: string, enum: [recent, stale, missing] }
+        recent_window_days:
+          type: integer
+          minimum: 1
+          maximum: 365
+          default: 30
+          description: Effective recent-sale window in days. Set SOLD_COMP_RECENCY_DAYS to an integer from 1 through 365; invalid or missing values use the safe default of 30.
         recent_count: { type: integer, minimum: 0 }
         stale_count: { type: integer, minimum: 0 }
         missing_count: { type: integer, minimum: 0 }
