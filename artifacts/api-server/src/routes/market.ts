@@ -9,7 +9,13 @@ import {
 } from "../market/core";
 import { buildSetupBundle } from "../market/setupBundle";
 import { addTrustedDomain, safeFetchPublicUrl } from "../market/urlSafety";
-import { hasProviderAdapter, searchMarket, sourceHealth } from "../market/providers";
+import {
+  hasProviderAdapter,
+  hasSoldCompsAdapter,
+  searchMarket,
+  searchSoldComps,
+  sourceHealth,
+} from "../market/providers";
 import {
   getStoredObservations,
   getStoredPriceHistory,
@@ -43,7 +49,7 @@ const trustedSources = () => [
   const configured = Boolean(provider?.configured);
   const searchable = configured && hasProviderAdapter(id, "products");
   const livePriceCapable = searchable && provider?.kind !== "discovery";
-  const soldCompsCapable = ["ebay","yahoo-auctions","mercari","tcgplayer","chrono24","artnet","stockx"].includes(id);
+  const soldCompsCapable = configured && hasSoldCompsAdapter(id);
   return {
     id,
     name,
@@ -134,6 +140,44 @@ async function searchRoute(queryValue: unknown, mode: "products" | "auctions", l
   return searchMarket(query, mode, limitFrom(limitValue));
 }
 
+function soldCompKey(comp: {
+  source: string;
+  url: string;
+  sold_at: string;
+  sold_price: number;
+  currency: string;
+}) {
+  return [comp.source, comp.url, comp.sold_at, comp.sold_price, comp.currency].join("|");
+}
+
+async function soldCompsRoute(queryValue: unknown, limitValue: unknown) {
+  const query = queryFrom(queryValue);
+  const limit = limitFrom(limitValue);
+  const live = await searchSoldComps(query, limit);
+  if (live.comps.length) {
+    await persistSoldComps(live.comps.map((comp) => ({
+      query,
+      title: comp.title,
+      soldPrice: comp.sold_price,
+      currency: comp.currency,
+      soldAt: comp.sold_at,
+      source: comp.source,
+      condition: comp.condition,
+      url: comp.url,
+      identity: comp.identity,
+    })));
+  }
+
+  const stored = await getStoredSoldComps(query, limit);
+  const merged = new Map<string, (typeof live.comps)[number]>();
+  for (const comp of stored) merged.set(soldCompKey(comp), comp);
+  for (const comp of live.comps) merged.set(soldCompKey(comp), comp);
+  const comps = [...merged.values()]
+    .sort((a, b) => new Date(b.sold_at).getTime() - new Date(a.sold_at).getTime())
+    .slice(0, limit);
+  return buildSoldCompsResponse(query, comps);
+}
+
 router.get("/v1/public/verify", async (req,res) => { try { res.json(await genericVerify(String(req.query.url||""))); } catch(e) { res.status(400).json({ error: e instanceof Error ? e.message : "verification_failed" }); } });
 router.get("/v1/public/search-products", async (req,res) => {
   try { res.json(await searchRoute(req.query.q, "products", req.query.limit)); }
@@ -154,8 +198,7 @@ router.get("/v1/price-history", async (req,res): Promise<void> => {
   res.json(await getStoredPriceHistory(queryFrom(req.query.identity)));
 });
 router.get("/v1/sold-comps", async (req,res): Promise<void> => {
-  const query = queryFrom(req.query.q);
-  res.json(buildSoldCompsResponse(query, await getStoredSoldComps(query)));
+  res.json(await soldCompsRoute(req.query.q, req.query.limit));
 });
 router.get("/v1/compare", async (req,res) => {
   try { res.json(await searchRoute(req.query.q, "products", req.query.limit)); }
@@ -233,8 +276,7 @@ router.post("/mcp", async (req,res) => {
         data = { ...computeCoverage(sources), sources };
       }
       else if (name === "get_sold_comps") {
-        const query = queryFrom(args.q);
-        data = buildSoldCompsResponse(query, await getStoredSoldComps(query));
+        data = await soldCompsRoute(args.q, args.limit);
       }
       else if (name === "get_price_history") data = await getStoredPriceHistory(queryFrom(args.identity ?? args.q));
       else data = { query: args.q || "", results: [], providers_queried: [], generated_at: new Date().toISOString() };

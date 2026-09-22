@@ -83,9 +83,10 @@ paths:
       tags: [intel]
       parameters:
         - { name: q, in: query, required: true, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
       responses:
         "200":
-          description: Normalized sold comps
+          description: Verified sold comparisons from supported official marketplaces
           content: { application/json: { schema: { $ref: "#/components/schemas/SoldCompsResult" } } }
   /v1/compare:
     get:
@@ -158,6 +159,7 @@ components:
     ProductIdentity:
       type: object
       properties:
+        brand: { type: ["string", "null"] }
         jan: { type: ["string", "null"] }
         gtin: { type: ["string", "null"] }
         asin: { type: ["string", "null"] }
@@ -263,7 +265,7 @@ components:
         sources: { type: array, items: { $ref: "#/components/schemas/CoverageSource" } }
     SoldComp:
       type: object
-      required: [title, sold_price, currency, sold_at, source, normalized_price, condition, url]
+      required: [title, sold_price, currency, sold_at, source, normalized_price, condition, url, identity]
       properties:
         title: { type: string }
         sold_price: { type: number }
@@ -273,6 +275,7 @@ components:
         normalized_price: { type: number }
         condition: { type: string }
         url: { type: string, format: uri }
+        identity: { $ref: "#/components/schemas/ProductIdentity" }
     SoldCompInput:
       type: object
       required: [title, soldPrice, currency, soldAt, source, url]

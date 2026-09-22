@@ -5,6 +5,7 @@
  * Market Intel MCP API
  * OpenAPI spec version: 1.0.0
  */
+import type { ProductIdentity } from './productIdentity';
 
 export interface SoldComp {
   title: string;
@@ -15,4 +16,5 @@ export interface SoldComp {
   normalized_price: number;
   condition: string;
   url: string;
+  identity: ProductIdentity;
 }

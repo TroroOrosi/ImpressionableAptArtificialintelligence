@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { availableProviderIds, searchMarket } from "./providers";
+import { availableProviderIds, availableSoldProviderIds, searchMarket, searchSoldComps } from "./providers";
 
 const providerEnv = [
   "YAHOO_CLIENT_ID",
@@ -9,6 +9,8 @@ const providerEnv = [
   "EBAY_CLIENT_ID",
   "EBAY_CLIENT_SECRET",
   "EBAY_ACCESS_TOKEN",
+  "EBAY_MARKETPLACE_ID",
+  "EBAY_SANDBOX",
   "KEEPA_API_KEY",
   "SERPAPI_KEY",
   "APIFY_TOKEN",
@@ -150,6 +152,110 @@ test("discovery providers never turn shopping snippets into price evidence", { c
     assert.deepEqual(response.results, []);
     assert.equal(response.discovery?.length, 2);
     assert.ok(response.discovery?.every((item) => item.kind === "DISCOVERY_ONLY"));
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreProviderEnv(savedEnv);
+  }
+});
+
+test("official sold adapter normalizes completed marketplace sales only", { concurrency: false }, async () => {
+  const savedEnv = saveProviderEnv();
+  const originalFetch = globalThis.fetch;
+  try {
+    clearProviderEnv();
+    process.env.EBAY_CLIENT_ID = "test-ebay";
+    process.env.EBAY_ACCESS_TOKEN = "test-ebay-token";
+    assert.deepEqual(availableSoldProviderIds(), ["ebay"]);
+
+    globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/buy/marketplace-insights/v1_beta/item_sales/search")) {
+        assert.equal(new Headers(init?.headers).get("x-ebay-c-marketplace-id"), "EBAY_US");
+        return jsonResponse({
+          itemSales: [
+            {
+              title: "Sold camera",
+              price: { value: "100", currency: "USD" },
+              lastSoldDate: "2026-09-19T10:00:00.000Z",
+              condition: "USED",
+              itemWebUrl: "https://www.ebay.example/sold-camera",
+              itemId: "sold-camera",
+              gtin: "4900000000001",
+              brand: "Example",
+            },
+            {
+              title: "Not a completed sale",
+              price: { value: "200", currency: "USD" },
+              itemWebUrl: "https://www.ebay.example/missing-date",
+              itemId: "missing-date",
+            },
+          ],
+        });
+      }
+      throw new Error(`Unexpected test URL: ${url}`);
+    }) as typeof fetch;
+
+    const response = await searchSoldComps("camera", 10);
+    assert.deepEqual(response.providers_queried, ["ebay"]);
+    assert.equal(response.comps.length, 1);
+    assert.deepEqual(response.comps[0], {
+      title: "Sold camera",
+      sold_price: 100,
+      currency: "USD",
+      sold_at: "2026-09-19T10:00:00.000Z",
+      source: "ebay",
+      normalized_price: 15000,
+      condition: "good",
+      url: "https://www.ebay.example/sold-camera",
+      identity: {
+        gtin: "4900000000001",
+        condition: "USED",
+        brand: "Example",
+        accessories: [],
+      },
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreProviderEnv(savedEnv);
+  }
+});
+
+test("sold adapter rejects unsupported eBay marketplace configuration before requesting sales", { concurrency: false }, async () => {
+  const savedEnv = saveProviderEnv();
+  const originalFetch = globalThis.fetch;
+  try {
+    clearProviderEnv();
+    process.env.EBAY_CLIENT_ID = "test-ebay";
+    process.env.EBAY_ACCESS_TOKEN = "test-ebay-token";
+    process.env.EBAY_MARKETPLACE_ID = "EBAY_JP";
+    let fetchCalls = 0;
+    globalThis.fetch = (async () => {
+      fetchCalls += 1;
+      throw new Error("unsupported marketplace should not call eBay");
+    }) as typeof fetch;
+
+    const response = await searchSoldComps("camera", 10);
+    assert.deepEqual(response, { comps: [], providers_queried: ["ebay"] });
+    assert.equal(fetchCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreProviderEnv(savedEnv);
+  }
+});
+
+test("discovery providers are never queried for sold-price evidence", { concurrency: false }, async () => {
+  const savedEnv = saveProviderEnv();
+  const originalFetch = globalThis.fetch;
+  try {
+    clearProviderEnv();
+    process.env.SERPAPI_KEY = "test-serpapi";
+    globalThis.fetch = (async () => {
+      throw new Error("discovery provider should not be queried");
+    }) as typeof fetch;
+
+    assert.deepEqual(availableSoldProviderIds(), []);
+    const response = await searchSoldComps("camera", 10);
+    assert.deepEqual(response, { comps: [], providers_queried: [] });
   } finally {
     globalThis.fetch = originalFetch;
     restoreProviderEnv(savedEnv);

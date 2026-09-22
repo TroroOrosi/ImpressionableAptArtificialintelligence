@@ -77,7 +77,7 @@ function normalizeCondition(value: unknown) {
   if (!condition) return "unknown";
   if (/brand[\s_-]*new|new|新品|未使用|sealed/.test(condition)) return "new";
   if (/mint|like[\s_-]*new|美品/.test(condition)) return "like_new";
-  if (/very[\s_-]*good|good|良品|中古/.test(condition)) return "good";
+  if (/very[\s_-]*good|good|used|良品|中古/.test(condition)) return "good";
   if (/fair|可|使用感/.test(condition)) return "fair";
   if (/poor|damaged|junk|ジャンク|難あり/.test(condition)) return "poor";
   return condition.replace(/\s+/g, "_").slice(0, 80) || "unknown";
@@ -345,6 +345,22 @@ function normalizeSoldComp(input: SoldCompInput) {
   };
 }
 
+export function normalizeSoldCompRecord(input: SoldCompInput): SoldCompRecord | null {
+  const normalized = normalizeSoldComp(input);
+  if (!normalized) return null;
+  return {
+    title: normalized.title,
+    sold_price: normalized.soldPrice,
+    currency: normalized.currency,
+    sold_at: normalized.soldAt.toISOString(),
+    source: normalized.source,
+    normalized_price: normalized.normalizedPrice,
+    condition: normalized.condition,
+    url: normalized.url,
+    identity: normalized.identity as Identity,
+  };
+}
+
 export async function persistSoldComps(inputs: SoldCompInput[]) {
   if (!inputs.length) return 0;
   const database = await getDatabaseModule();
@@ -377,6 +393,7 @@ function mapSoldComp(row: MarketSoldComp): SoldCompRecord {
     normalized_price: Number(row.normalizedPrice),
     condition: row.condition,
     url: row.url,
+    identity: normalizeIdentity(row.identity) as Identity,
   };
 }
 

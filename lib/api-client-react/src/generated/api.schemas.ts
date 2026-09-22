@@ -13,6 +13,8 @@ export interface HealthStatus {
 
 export interface ProductIdentity {
   /** @nullable */
+  brand?: string | null;
+  /** @nullable */
   jan?: string | null;
   /** @nullable */
   gtin?: string | null;
@@ -156,6 +158,7 @@ export interface SoldComp {
   normalized_price: number;
   condition: string;
   url: string;
+  identity: ProductIdentity;
 }
 
 export type SoldCompInputIdentity = { [key: string]: unknown };
@@ -279,6 +282,11 @@ identity: string;
 
 export type GetSoldCompsParams = {
 q: string;
+/**
+ * @minimum 1
+ * @maximum 50
+ */
+limit?: number;
 };
 
 export type CompareOffersParams = {

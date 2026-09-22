@@ -13,8 +13,9 @@ import {
   type Observation,
   type ProviderSearchResult,
   type SearchResponse,
+  type SoldCompRecord,
 } from "./core";
-import { persistObservations } from "./storage";
+import { normalizeSoldCompRecord, persistObservations } from "./storage";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -29,7 +30,17 @@ type SearchAdapter = {
   search: (context: SearchContext) => Promise<ProviderSearchResult>;
 };
 
+type SoldSearchContext = {
+  query: string;
+  limit: number;
+};
+
+type SoldAdapter = {
+  search: (context: SoldSearchContext) => Promise<SoldCompRecord[]>;
+};
+
 const REQUEST_TIMEOUT_MS = 12_000;
+const EBAY_SOLD_MARKETPLACE_IDS = new Set(["EBAY_US"]);
 
 class ProviderRequestError extends Error {
   constructor(
@@ -115,7 +126,13 @@ function identityFrom(item: JsonRecord): Identity {
     asin: firstString(item, "asin", "ASIN"),
     mpn: firstString(item, "mpn", "manufacturerPartNumber", "partNumber", "code.mpn"),
     model: firstString(item, "model", "modelNumber", "model_number", "code.model"),
-    condition: firstString(item, "condition", "itemCondition"),
+    condition: firstString(item, "conditionDisplayName", "condition.conditionDisplayName", "condition", "itemCondition"),
+    brand: firstString(item, "brand", "brandName"),
+    capacity: firstString(item, "capacity", "storageCapacity", "size"),
+    color: firstString(item, "color", "colour"),
+    region: firstString(item, "region", "country"),
+    version: firstString(item, "version", "edition"),
+    year: firstString(item, "year", "releaseYear"),
   };
 }
 
@@ -153,6 +170,13 @@ function rawDiscovery(providerId: string, item: JsonRecord, paths: { title: stri
   const url = firstValue(item, ...paths.url);
   const snippet = firstValue(item, ...paths.snippet);
   return normalizeDiscovery({ title, url, source: providerId, snippet });
+}
+
+function validTimestamp(value: unknown) {
+  const raw = stringValue(value);
+  if (!raw) return undefined;
+  const date = new Date(raw);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
 }
 
 async function fetchJson(providerId: string, url: string, init?: RequestInit): Promise<unknown> {
@@ -312,6 +336,63 @@ async function searchEbay(context: SearchContext): Promise<ProviderSearchResult>
     if (observation) result.observations.push(observation);
   }
   return result;
+}
+
+async function searchEbaySold(context: SoldSearchContext): Promise<SoldCompRecord[]> {
+  const configuredMarketplace = process.env.EBAY_MARKETPLACE_ID?.trim().toUpperCase() || "EBAY_US";
+  if (!EBAY_SOLD_MARKETPLACE_IDS.has(configuredMarketplace)) {
+    throw new ProviderRequestError("ebay", "unsupported_sold_marketplace");
+  }
+
+  const token = await ebayAccessToken();
+  const host = process.env.EBAY_SANDBOX === "true" ? "https://api.sandbox.ebay.com" : "https://api.ebay.com";
+  const url = new URL(`${host}/buy/marketplace-insights/v1_beta/item_sales/search`);
+  url.searchParams.set("q", context.query);
+  url.searchParams.set("limit", String(context.limit));
+
+  const payload = await fetchJson("ebay", url.href, {
+    headers: {
+      accept: "application/json",
+      authorization: `Bearer ${token}`,
+      "x-ebay-c-marketplace-id": configuredMarketplace,
+    },
+  });
+  const comps: SoldCompRecord[] = [];
+  for (const item of recordsAt(payload, "itemSales", "sales", "items", "results")) {
+    const price = asRecord(firstValue(item, "price", "soldPrice", "salePrice"));
+    const soldAt = validTimestamp(firstValue(
+      item,
+      "lastSoldDate",
+      "soldDate",
+      "transactionDate",
+      "itemEndDate",
+      "endDate",
+    ));
+    if (!soldAt) continue;
+
+    const comp = normalizeSoldCompRecord({
+      query: context.query,
+      title: firstValue(item, "title", "itemName", "name"),
+      soldPrice: price ? firstValue(price, "value", "amount") : firstValue(item, "price", "soldPrice", "salePrice"),
+      currency: price
+        ? firstValue(price, "currency")
+        : firstValue(item, "currency", "priceCurrency") || "JPY",
+      soldAt,
+      source: "ebay",
+      condition: firstValue(
+        item,
+        "conditionDisplayName",
+        "condition.conditionDisplayName",
+        "condition",
+        "itemCondition",
+      ),
+      url: firstValue(item, "itemWebUrl", "itemUrl", "url", "link"),
+      identity: identityFrom(item),
+      providerItemId: firstValue(item, "itemId", "legacyItemId", "epid"),
+    });
+    if (comp) comps.push(comp);
+  }
+  return comps;
 }
 
 function keepaPrice(product: JsonRecord): number | null {
@@ -506,6 +587,10 @@ const adapters: Record<string, SearchAdapter> = {
   brightdata: { modes: ["products"], search: searchBrightData },
 };
 
+const soldAdapters: Record<string, SoldAdapter> = {
+  ebay: { search: searchEbaySold },
+};
+
 function configuredProvider(providerId: string) {
   const provider = providerRegistry.find((candidate) => candidate.id === providerId);
   return provider ? isProviderConfigured(provider) : false;
@@ -516,9 +601,20 @@ export function hasProviderAdapter(providerId: string, mode?: MarketMode) {
   return Boolean(adapter && (!mode || adapter.modes.includes(mode)));
 }
 
+export function hasSoldCompsAdapter(providerId: string) {
+  return Boolean(soldAdapters[providerId]);
+}
+
 export function availableProviderIds(mode?: MarketMode) {
   return providerRegistry
     .filter((provider) => configuredProvider(provider.id) && hasProviderAdapter(provider.id, mode))
+    .sort((a, b) => a.tier - b.tier)
+    .map((provider) => provider.id);
+}
+
+export function availableSoldProviderIds() {
+  return providerRegistry
+    .filter((provider) => configuredProvider(provider.id) && hasSoldCompsAdapter(provider.id))
     .sort((a, b) => a.tier - b.tier)
     .map((provider) => provider.id);
 }
@@ -556,6 +652,43 @@ export async function searchMarket(query: string, mode: MarketMode, limit = 20):
   }
 
   return buildSearchResponse(normalizedQuery, observations, discoveries, providersQueried);
+}
+
+export type SoldCompsSearchResponse = {
+  comps: SoldCompRecord[];
+  providers_queried: string[];
+};
+
+export async function searchSoldComps(query: string, limit = 20): Promise<SoldCompsSearchResponse> {
+  const normalizedQuery = query.trim();
+  const normalizedLimit = Math.max(1, Math.min(50, Math.floor(limit) || 20));
+  const comps: SoldCompRecord[] = [];
+  const providersQueried: string[] = [];
+
+  for (const providerId of availableSoldProviderIds()) {
+    const adapter = soldAdapters[providerId];
+    if (!adapter) continue;
+    providersQueried.push(providerId);
+    const startedAt = Date.now();
+    try {
+      const providerComps = await adapter.search({ query: normalizedQuery, limit: normalizedLimit });
+      comps.push(...providerComps.slice(0, normalizedLimit));
+      await recordProviderHealth(providerId, {
+        ok: true,
+        latencyMs: Date.now() - startedAt,
+        observations: providerComps.length,
+      });
+    } catch (error) {
+      await recordProviderHealth(providerId, {
+        ok: false,
+        latencyMs: Date.now() - startedAt,
+        observations: 0,
+        error: error instanceof ProviderRequestError ? error.code : "provider_request_failed",
+      });
+    }
+  }
+
+  return { comps, providers_queried: providersQueried };
 }
 
 export async function sourceHealth() {

@@ -43,6 +43,7 @@ export const VerifyCurrentPriceResponse = zod.object({
   "remaining_seconds": zod.number().int().nullish(),
   "actionable": zod.boolean().optional(),
   "identity": zod.object({
+  "brand": zod.string().nullish(),
   "jan": zod.string().nullish(),
   "gtin": zod.string().nullish(),
   "asin": zod.string().nullish(),
@@ -102,6 +103,7 @@ export const SearchProductsResponse = zod.object({
   "remaining_seconds": zod.number().int().nullish(),
   "actionable": zod.boolean().optional(),
   "identity": zod.object({
+  "brand": zod.string().nullish(),
   "jan": zod.string().nullish(),
   "gtin": zod.string().nullish(),
   "asin": zod.string().nullish(),
@@ -171,6 +173,7 @@ export const SearchAuctionsResponse = zod.object({
   "remaining_seconds": zod.number().int().nullish(),
   "actionable": zod.boolean().optional(),
   "identity": zod.object({
+  "brand": zod.string().nullish(),
   "jan": zod.string().nullish(),
   "gtin": zod.string().nullish(),
   "asin": zod.string().nullish(),
@@ -264,6 +267,7 @@ export const GetPriceHistoryResponseItem = zod.object({
   "remaining_seconds": zod.number().int().nullish(),
   "actionable": zod.boolean().optional(),
   "identity": zod.object({
+  "brand": zod.string().nullish(),
   "jan": zod.string().nullish(),
   "gtin": zod.string().nullish(),
   "asin": zod.string().nullish(),
@@ -284,8 +288,14 @@ export const GetPriceHistoryResponseItem = zod.object({
 export const GetPriceHistoryResponse = zod.array(GetPriceHistoryResponseItem)
 
 
+export const getSoldCompsQueryLimitDefault = 20;
+export const getSoldCompsQueryLimitMax = 50;
+
+
+
 export const GetSoldCompsQueryParams = zod.object({
-  "q": zod.coerce.string()
+  "q": zod.coerce.string(),
+  "limit": zod.coerce.number().int().min(1).max(getSoldCompsQueryLimitMax).default(getSoldCompsQueryLimitDefault)
 })
 
 export const GetSoldCompsResponse = zod.object({
@@ -298,7 +308,25 @@ export const GetSoldCompsResponse = zod.object({
   "source": zod.string(),
   "normalized_price": zod.number(),
   "condition": zod.string(),
-  "url": zod.string().url()
+  "url": zod.string().url(),
+  "identity": zod.object({
+  "brand": zod.string().nullish(),
+  "jan": zod.string().nullish(),
+  "gtin": zod.string().nullish(),
+  "asin": zod.string().nullish(),
+  "mpn": zod.string().nullish(),
+  "model": zod.string().nullish(),
+  "capacity": zod.string().nullish(),
+  "color": zod.string().nullish(),
+  "region": zod.string().nullish(),
+  "version": zod.string().nullish(),
+  "year": zod.string().nullish(),
+  "condition": zod.string().nullish(),
+  "grade": zod.string().nullish(),
+  "cert_company": zod.string().nullish(),
+  "cert_number": zod.string().nullish(),
+  "accessories": zod.array(zod.string()).optional()
+})
 })),
   "conservative_value": zod.number().nullable(),
   "liquidity": zod.string(),
@@ -336,6 +364,7 @@ export const CompareOffersResponse = zod.object({
   "remaining_seconds": zod.number().int().nullish(),
   "actionable": zod.boolean().optional(),
   "identity": zod.object({
+  "brand": zod.string().nullish(),
   "jan": zod.string().nullish(),
   "gtin": zod.string().nullish(),
   "asin": zod.string().nullish(),
@@ -401,6 +430,7 @@ export const ListConflictsResponseItem = zod.object({
   "remaining_seconds": zod.number().int().nullish(),
   "actionable": zod.boolean().optional(),
   "identity": zod.object({
+  "brand": zod.string().nullish(),
   "jan": zod.string().nullish(),
   "gtin": zod.string().nullish(),
   "asin": zod.string().nullish(),
@@ -443,6 +473,7 @@ export const ListObservationsResponseItem = zod.object({
   "remaining_seconds": zod.number().int().nullish(),
   "actionable": zod.boolean().optional(),
   "identity": zod.object({
+  "brand": zod.string().nullish(),
   "jan": zod.string().nullish(),
   "gtin": zod.string().nullish(),
   "asin": zod.string().nullish(),

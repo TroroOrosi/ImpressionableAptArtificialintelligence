@@ -71,6 +71,7 @@ test("sold comps normalize conservative value around fees and reject outliers", 
       normalized_price: 800,
       condition: "good",
       url: "https://example.com/a",
+      identity: {},
     },
     {
       title: "Used camera B",
@@ -81,6 +82,7 @@ test("sold comps normalize conservative value around fees and reject outliers", 
       normalized_price: 1100,
       condition: "good",
       url: "https://example.com/b",
+      identity: {},
     },
     {
       title: "Badly reported outlier",
@@ -91,6 +93,7 @@ test("sold comps normalize conservative value around fees and reject outliers", 
       normalized_price: 10000,
       condition: "new",
       url: "https://example.com/c",
+      identity: {},
     },
   ]);
 

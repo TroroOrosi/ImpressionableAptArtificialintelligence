@@ -93,3 +93,78 @@ test("setup and health responses never expose credential environment names or va
     assert.equal(combined.includes(secretName), false);
   }
 }));
+
+test("sold comps endpoint returns structured official sales with identity", { concurrency: false }, () => withServer(async (base) => {
+  const savedDatabaseUrl = process.env.DATABASE_URL;
+  const savedEbayClientId = process.env.EBAY_CLIENT_ID;
+  const savedEbayAccessToken = process.env.EBAY_ACCESS_TOKEN;
+  const originalFetch = globalThis.fetch;
+  try {
+    process.env.DATABASE_URL = "";
+    process.env.EBAY_CLIENT_ID = "test-ebay";
+    process.env.EBAY_ACCESS_TOKEN = "test-ebay-token";
+    globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.startsWith(base)) return originalFetch(input, init);
+      if (!url.includes("/buy/marketplace-insights/v1_beta/item_sales/search")) {
+        throw new Error(`Unexpected test URL: ${url}`);
+      }
+      return new Response(JSON.stringify({
+        itemSales: [{
+          title: "Sold camera",
+          price: { value: "100", currency: "USD" },
+          lastSoldDate: "2026-09-19T10:00:00.000Z",
+          condition: "USED",
+          itemWebUrl: "https://www.ebay.example/sold-camera",
+          itemId: "sold-camera",
+          gtin: "4900000000001",
+          brand: "Example",
+        }],
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+
+    const response = await fetch(`${base}/v1/sold-comps?q=camera&limit=10`);
+    assert.equal(response.status, 200);
+    const body = await response.json() as {
+      comps: Array<{
+        source: string;
+        sold_at: string;
+        sold_price: number;
+        condition: string;
+        url: string;
+        identity: { brand?: string; gtin?: string };
+      }>;
+      conservative_value: number | null;
+      liquidity: string;
+      confidence: number;
+    };
+    assert.equal(body.comps.length, 1);
+    assert.deepEqual(body.comps[0], {
+      title: "Sold camera",
+      sold_price: 100,
+      currency: "USD",
+      source: "ebay",
+      sold_at: "2026-09-19T10:00:00.000Z",
+      normalized_price: 15000,
+      condition: "good",
+      url: "https://www.ebay.example/sold-camera",
+      identity: {
+        brand: "Example",
+        gtin: "4900000000001",
+        condition: "USED",
+        accessories: [],
+      },
+    });
+    assert.equal(body.conservative_value, 15000);
+    assert.equal(body.liquidity, "low");
+    assert.equal(body.confidence, 0.15);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (savedDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = savedDatabaseUrl;
+    if (savedEbayClientId === undefined) delete process.env.EBAY_CLIENT_ID;
+    else process.env.EBAY_CLIENT_ID = savedEbayClientId;
+    if (savedEbayAccessToken === undefined) delete process.env.EBAY_ACCESS_TOKEN;
+    else process.env.EBAY_ACCESS_TOKEN = savedEbayAccessToken;
+  }
+}));

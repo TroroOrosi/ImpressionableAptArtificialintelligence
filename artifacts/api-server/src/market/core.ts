@@ -99,6 +99,7 @@ export type SoldCompRecord = {
   normalized_price: number;
   condition: string;
   url: string;
+  identity: Identity;
 };
 
 export type SoldCompsResult = {

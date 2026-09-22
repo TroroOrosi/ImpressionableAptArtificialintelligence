@@ -9,6 +9,7 @@
 - `RAKUTEN_ACCESS_KEY`（新しい楽天Web Service APIを使う場合）
 - `EBAY_CLIENT_ID`
 - `EBAY_CLIENT_SECRET`（または事前発行済みの `EBAY_ACCESS_TOKEN`）
+- `EBAY_MARKETPLACE_ID`（任意。sold comps は現在 `EBAY_US` のみ対応し、未設定時も `EBAY_US` を使います。Marketplace Insights の利用権限が必要です。sold comps を使う場合は `EBAY_US` を指定してください）
 - `AMAZON_CREATORS_KEY`
 - `KEEPA_API_KEY`
 - `SERPAPI_KEY`

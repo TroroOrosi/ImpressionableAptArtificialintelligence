@@ -8,6 +8,8 @@
 
 export interface ProductIdentity {
   /** @nullable */
+  brand?: string | null;
+  /** @nullable */
   jan?: string | null;
   /** @nullable */
   gtin?: string | null;

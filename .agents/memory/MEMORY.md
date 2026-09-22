@@ -1,2 +1,3 @@
 - [Marketplace evidence boundary](provider-adapters.md) — only structured provider-owned prices become observations; search snippets remain discovery-only.
 - [Artifact build environment](build-environment.md) — manual monorepo builds need workflow-style PORT and BASE_PATH values.
+- [Market test database readiness](market-test-environment.md) — DATABASE_URL may exist before the market tables are applied, so persistence checks need schema readiness.
