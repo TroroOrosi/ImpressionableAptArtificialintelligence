@@ -287,6 +287,16 @@ components:
         condition: { type: string }
         url: { type: string, format: uri }
         identity: { $ref: "#/components/schemas/ProductIdentity" }
+    SoldCompsFreshness:
+      type: object
+      required: [status, recent_count, stale_count, missing_count, latest_sold_at, oldest_sold_at]
+      properties:
+        status: { type: string, enum: [recent, stale, missing] }
+        recent_count: { type: integer, minimum: 0 }
+        stale_count: { type: integer, minimum: 0 }
+        missing_count: { type: integer, minimum: 0 }
+        latest_sold_at: { type: ["string", "null"], format: date-time }
+        oldest_sold_at: { type: ["string", "null"], format: date-time }
     SoldCompInput:
       type: object
       required: [title, soldPrice, currency, soldAt, source, url]
@@ -326,7 +336,7 @@ components:
         skipped: { type: integer, minimum: 0 }
     SoldCompsResult:
       type: object
-      required: [query, comps, conservative_value, liquidity, confidence, persistence_status]
+      required: [query, comps, conservative_value, liquidity, confidence, persistence_status, freshness]
       properties:
         query: { type: string }
         comps: { type: array, items: { $ref: "#/components/schemas/SoldComp" } }
@@ -334,6 +344,7 @@ components:
         liquidity: { type: string }
         confidence: { type: number }
         persistence_status: { $ref: "#/components/schemas/PersistenceStatus" }
+        freshness: { $ref: "#/components/schemas/SoldCompsFreshness" }
     AdminSummary:
       type: object
       required: [providers_total, providers_available, registry_coverage_percent, conflicts_24h, stale_24h, observations_24h, persistence_status]

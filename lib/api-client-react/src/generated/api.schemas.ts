@@ -194,6 +194,29 @@ export interface SoldComp {
   identity: ProductIdentity;
 }
 
+export type SoldCompsFreshnessStatus = typeof SoldCompsFreshnessStatus[keyof typeof SoldCompsFreshnessStatus];
+
+
+export const SoldCompsFreshnessStatus = {
+  recent: 'recent',
+  stale: 'stale',
+  missing: 'missing',
+} as const;
+
+export interface SoldCompsFreshness {
+  status: SoldCompsFreshnessStatus;
+  /** @minimum 0 */
+  recent_count: number;
+  /** @minimum 0 */
+  stale_count: number;
+  /** @minimum 0 */
+  missing_count: number;
+  /** @nullable */
+  latest_sold_at: string | null;
+  /** @nullable */
+  oldest_sold_at: string | null;
+}
+
 export type SoldCompInputIdentity = { [key: string]: unknown };
 
 export type SoldCompInputFees = number | string | { [key: string]: unknown };
@@ -244,6 +267,7 @@ export interface SoldCompsResult {
   liquidity: string;
   confidence: number;
   persistence_status: PersistenceStatus;
+  freshness: SoldCompsFreshness;
 }
 
 export interface AdminSummary {

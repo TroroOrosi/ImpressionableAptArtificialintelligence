@@ -32,6 +32,8 @@ export * from './soldCompInputFee';
 export * from './soldCompInputFees';
 export * from './soldCompInputIdentity';
 export * from './soldCompInputShipping';
+export * from './soldCompsFreshness';
+export * from './soldCompsFreshnessStatus';
 export * from './soldCompsResult';
 export * from './sourceHealth';
 export * from './sourceHealthLastErrorType';

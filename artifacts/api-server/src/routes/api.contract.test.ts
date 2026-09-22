@@ -113,6 +113,7 @@ test("sold comps endpoint returns structured official sales with identity", { co
   const savedEbayClientId = process.env.EBAY_CLIENT_ID;
   const savedEbayAccessToken = process.env.EBAY_ACCESS_TOKEN;
   const originalFetch = globalThis.fetch;
+  const recentSoldAt = new Date(Date.now() - 2 * 24 * 60 * 60 * 1_000).toISOString();
   try {
     process.env.DATABASE_URL = "";
     process.env.EBAY_CLIENT_ID = "test-ebay";
@@ -127,7 +128,7 @@ test("sold comps endpoint returns structured official sales with identity", { co
         itemSales: [{
           title: "Sold camera",
           soldPrice: { value: "100", currency: "USD" },
-          lastSoldDate: "2026-09-19T10:00:00.000Z",
+          lastSoldDate: recentSoldAt,
           condition: "USED",
           itemWebUrl: "https://www.ebay.example/sold-camera",
           itemId: "sold-camera",
@@ -152,6 +153,14 @@ test("sold comps endpoint returns structured official sales with identity", { co
       liquidity: string;
       confidence: number;
       persistence_status: string;
+      freshness: {
+        status: string;
+        recent_count: number;
+        stale_count: number;
+        missing_count: number;
+        latest_sold_at: string | null;
+        oldest_sold_at: string | null;
+      };
     };
     assert.equal(body.comps.length, 1);
     assert.deepEqual(body.comps[0], {
@@ -159,7 +168,7 @@ test("sold comps endpoint returns structured official sales with identity", { co
       sold_price: 100,
       currency: "USD",
       source: "ebay",
-      sold_at: "2026-09-19T10:00:00.000Z",
+        sold_at: recentSoldAt,
       normalized_price: 15000,
       condition: "good",
       url: "https://www.ebay.example/sold-camera",
@@ -174,6 +183,14 @@ test("sold comps endpoint returns structured official sales with identity", { co
     assert.equal(body.liquidity, "low");
     assert.equal(body.confidence, 0.15);
     assert.equal(body.persistence_status, "unavailable");
+    assert.deepEqual(body.freshness, {
+      status: "recent",
+      recent_count: 1,
+      stale_count: 0,
+      missing_count: 0,
+      latest_sold_at: recentSoldAt,
+      oldest_sold_at: recentSoldAt,
+    });
   } finally {
     globalThis.fetch = originalFetch;
     if (savedDatabaseUrl === undefined) delete process.env.DATABASE_URL;
@@ -182,6 +199,114 @@ test("sold comps endpoint returns structured official sales with identity", { co
     else process.env.EBAY_CLIENT_ID = savedEbayClientId;
     if (savedEbayAccessToken === undefined) delete process.env.EBAY_ACCESS_TOKEN;
     else process.env.EBAY_ACCESS_TOKEN = savedEbayAccessToken;
+  }
+}));
+
+test("sold comps freshness reports missing evidence when no sales are available", { concurrency: false }, () => withServer(async (base) => {
+  const savedDatabaseUrl = process.env.DATABASE_URL;
+  const originalFetch = globalThis.fetch;
+  try {
+    process.env.DATABASE_URL = "";
+    globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+      if (String(input).startsWith(base)) return originalFetch(input, init);
+      throw new Error(`Unexpected live sold-comps request: ${String(input)}`);
+    }) as typeof fetch;
+
+    const response = await fetch(`${base}/v1/sold-comps?q=missing-camera&limit=10`);
+    assert.equal(response.status, 200);
+    const body = await response.json() as {
+      comps: unknown[];
+      conservative_value: number | null;
+      freshness: {
+        status: string;
+        recent_count: number;
+        stale_count: number;
+        missing_count: number;
+        latest_sold_at: string | null;
+        oldest_sold_at: string | null;
+      };
+    };
+    assert.deepEqual(body.comps, []);
+    assert.equal(body.conservative_value, null);
+    assert.deepEqual(body.freshness, {
+      status: "missing",
+      recent_count: 0,
+      stale_count: 0,
+      missing_count: 0,
+      latest_sold_at: null,
+      oldest_sold_at: null,
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (savedDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = savedDatabaseUrl;
+  }
+}));
+
+test("sold comps freshness flags old evidence without changing the estimate", { concurrency: false }, () => withServer(async (base) => {
+  const savedDatabaseUrl = process.env.DATABASE_URL;
+  const savedEbayClientId = process.env.EBAY_CLIENT_ID;
+  const savedEbayAccessToken = process.env.EBAY_ACCESS_TOKEN;
+  const savedEbayMarketplace = process.env.EBAY_MARKETPLACE_ID;
+  const originalFetch = globalThis.fetch;
+  const staleSoldAt = new Date(Date.now() - 45 * 24 * 60 * 60 * 1_000).toISOString();
+  try {
+    process.env.DATABASE_URL = "";
+    process.env.EBAY_CLIENT_ID = "test-ebay";
+    process.env.EBAY_ACCESS_TOKEN = "test-ebay-token";
+    process.env.EBAY_MARKETPLACE_ID = "EBAY_US";
+    globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.startsWith(base)) return originalFetch(input, init);
+      if (url.includes("/buy/marketplace-insights/v1_beta/item_sales/search")) {
+        return new Response(JSON.stringify({
+          itemSales: [{
+            title: "Stale camera",
+            soldPrice: { value: "100", currency: "USD" },
+            lastSoldDate: staleSoldAt,
+            condition: "USED",
+            itemWebUrl: "https://www.ebay.example/stale-camera",
+            itemId: "stale-camera",
+            gtin: "4900000000001",
+            brand: "Example",
+          }],
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`Unexpected test URL: ${url}`);
+    }) as typeof fetch;
+
+    const response = await fetch(`${base}/v1/sold-comps?q=stale-camera&limit=10`);
+    assert.equal(response.status, 200);
+    const body = await response.json() as {
+      conservative_value: number | null;
+      freshness: {
+        status: string;
+        recent_count: number;
+        stale_count: number;
+        missing_count: number;
+        latest_sold_at: string | null;
+        oldest_sold_at: string | null;
+      };
+    };
+    assert.equal(body.conservative_value, 15000);
+    assert.deepEqual(body.freshness, {
+      status: "stale",
+      recent_count: 0,
+      stale_count: 1,
+      missing_count: 0,
+      latest_sold_at: staleSoldAt,
+      oldest_sold_at: staleSoldAt,
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (savedDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = savedDatabaseUrl;
+    if (savedEbayClientId === undefined) delete process.env.EBAY_CLIENT_ID;
+    else process.env.EBAY_CLIENT_ID = savedEbayClientId;
+    if (savedEbayAccessToken === undefined) delete process.env.EBAY_ACCESS_TOKEN;
+    else process.env.EBAY_ACCESS_TOKEN = savedEbayAccessToken;
+    if (savedEbayMarketplace === undefined) delete process.env.EBAY_MARKETPLACE_ID;
+    else process.env.EBAY_MARKETPLACE_ID = savedEbayMarketplace;
   }
 }));
 

@@ -114,6 +114,15 @@ export type SoldCompRecord = {
   identity: Identity;
 };
 
+export type SoldCompsFreshness = {
+  status: "recent" | "stale" | "missing";
+  recent_count: number;
+  stale_count: number;
+  missing_count: number;
+  latest_sold_at: string | null;
+  oldest_sold_at: string | null;
+};
+
 export type SoldCompsResult = {
   query: string;
   comps: SoldCompRecord[];
@@ -121,6 +130,7 @@ export type SoldCompsResult = {
   liquidity: "insufficient_data" | "low" | "medium" | "high";
   confidence: number;
   persistence_status: MarketPersistenceStatus;
+  freshness: SoldCompsFreshness;
 };
 
 export type ProviderSearchResult = {
@@ -322,6 +332,46 @@ function removePriceOutliers(comps: SoldCompRecord[]) {
   return valid.filter((comp) => comp.normalized_price >= lowerFence && comp.normalized_price <= upperFence);
 }
 
+export const SOLD_COMP_RECENCY_DAYS = 30;
+
+const millisecondsPerDay = 24 * 60 * 60 * 1_000;
+
+export function summarizeSoldCompsFreshness(
+  comps: SoldCompRecord[],
+  now = new Date(),
+): SoldCompsFreshness {
+  const nowMs = now.getTime();
+  const recentCutoffMs = nowMs - SOLD_COMP_RECENCY_DAYS * millisecondsPerDay;
+  let recentCount = 0;
+  let staleCount = 0;
+  let missingCount = 0;
+  let latestSoldMs = Number.NEGATIVE_INFINITY;
+  let oldestSoldMs = Number.POSITIVE_INFINITY;
+
+  for (const comp of comps) {
+    const soldMs = new Date(comp.sold_at).getTime();
+    if (!Number.isFinite(soldMs)) {
+      missingCount += 1;
+      continue;
+    }
+
+    latestSoldMs = Math.max(latestSoldMs, soldMs);
+    oldestSoldMs = Math.min(oldestSoldMs, soldMs);
+    if (soldMs >= recentCutoffMs) recentCount += 1;
+    else staleCount += 1;
+  }
+
+  const hasDatedSales = recentCount + staleCount > 0;
+  return {
+    status: !hasDatedSales ? "missing" : staleCount > 0 || missingCount > 0 ? "stale" : "recent",
+    recent_count: recentCount,
+    stale_count: staleCount,
+    missing_count: missingCount,
+    latest_sold_at: hasDatedSales ? new Date(latestSoldMs).toISOString() : null,
+    oldest_sold_at: hasDatedSales ? new Date(oldestSoldMs).toISOString() : null,
+  };
+}
+
 export function buildSoldCompsResponse(
   query: string,
   comps: SoldCompRecord[],
@@ -347,6 +397,7 @@ export function buildSoldCompsResponse(
           : "high",
     confidence,
     persistence_status: persistenceStatus,
+    freshness: summarizeSoldCompsFreshness(usable),
   };
 }
 

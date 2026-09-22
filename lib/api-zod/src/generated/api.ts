@@ -302,6 +302,14 @@ export const GetSoldCompsQueryParams = zod.object({
   "limit": zod.coerce.number().int().min(1).max(getSoldCompsQueryLimitMax).default(getSoldCompsQueryLimitDefault)
 })
 
+export const getSoldCompsResponseFreshnessRecentCountMin = 0;
+
+export const getSoldCompsResponseFreshnessStaleCountMin = 0;
+
+export const getSoldCompsResponseFreshnessMissingCountMin = 0;
+
+
+
 export const GetSoldCompsResponse = zod.object({
   "query": zod.string(),
   "comps": zod.array(zod.object({
@@ -335,7 +343,15 @@ export const GetSoldCompsResponse = zod.object({
   "conservative_value": zod.number().nullable(),
   "liquidity": zod.string(),
   "confidence": zod.number(),
-  "persistence_status": zod.enum(['available', 'unavailable'])
+  "persistence_status": zod.enum(['available', 'unavailable']),
+  "freshness": zod.object({
+  "status": zod.enum(['recent', 'stale', 'missing']),
+  "recent_count": zod.number().int().min(getSoldCompsResponseFreshnessRecentCountMin),
+  "stale_count": zod.number().int().min(getSoldCompsResponseFreshnessStaleCountMin),
+  "missing_count": zod.number().int().min(getSoldCompsResponseFreshnessMissingCountMin),
+  "latest_sold_at": zod.coerce.date().nullable(),
+  "oldest_sold_at": zod.coerce.date().nullable()
+})
 })
 
 

@@ -7,6 +7,7 @@ import {
   buildSoldCompsResponse,
   isActionable,
   providerRegistry,
+  summarizeSoldCompsFreshness,
   verifyEvidence,
 } from "./core";
 
@@ -100,6 +101,49 @@ test("sold comps normalize conservative value around fees and reject outliers", 
   assert.equal(response.conservative_value, 875);
   assert.equal(response.comps.length, 3);
   assert.equal(response.liquidity, "medium");
+});
+
+test("sold comp freshness distinguishes missing, recent, and stale evidence", () => {
+  const now = new Date("2026-09-22T00:00:00.000Z");
+  const comp = (soldAt: string) => ({
+    title: "Used camera",
+    sold_price: 1000,
+    currency: "JPY",
+    sold_at: soldAt,
+    source: "market-a",
+    normalized_price: 1000,
+    condition: "good",
+    url: `https://example.com/${soldAt}`,
+    identity: {},
+  });
+
+  assert.deepEqual(summarizeSoldCompsFreshness([], now), {
+    status: "missing",
+    recent_count: 0,
+    stale_count: 0,
+    missing_count: 0,
+    latest_sold_at: null,
+    oldest_sold_at: null,
+  });
+  assert.equal(
+    summarizeSoldCompsFreshness([comp("2026-09-20T00:00:00.000Z")], now).status,
+    "recent",
+  );
+  assert.equal(
+    summarizeSoldCompsFreshness([comp("2026-08-01T00:00:00.000Z")], now).status,
+    "stale",
+  );
+  assert.deepEqual(
+    summarizeSoldCompsFreshness([comp("not-a-date")], now),
+    {
+      status: "missing",
+      recent_count: 0,
+      stale_count: 0,
+      missing_count: 1,
+      latest_sold_at: null,
+      oldest_sold_at: null,
+    },
+  );
 });
 
 test("health degrades after consecutive failures", () => {

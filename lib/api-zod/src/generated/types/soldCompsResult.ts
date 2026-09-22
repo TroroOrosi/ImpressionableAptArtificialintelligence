@@ -7,6 +7,7 @@
  */
 import type { PersistenceStatus } from './persistenceStatus';
 import type { SoldComp } from './soldComp';
+import type { SoldCompsFreshness } from './soldCompsFreshness';
 
 export interface SoldCompsResult {
   query: string;
@@ -16,4 +17,5 @@ export interface SoldCompsResult {
   liquidity: string;
   confidence: number;
   persistence_status: PersistenceStatus;
+  freshness: SoldCompsFreshness;
 }
