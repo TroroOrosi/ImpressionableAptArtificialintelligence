@@ -9,6 +9,8 @@ import {
   verifyEvidence,
 } from "../market/core";
 import { buildSetupBundle } from "../market/setupBundle";
+import { buildChatgptBundle } from "../market/chatgptBundle";
+import { createCallLimiter, handleMcpHttp, publicBaseUrl } from "../market/mcp";
 import { addTrustedDomain, safeFetchPublicUrl } from "../market/urlSafety";
 import {
   hasProviderAdapter,
@@ -32,7 +34,8 @@ import {
 
 const router: IRouter = Router();
 const started = Date.now();
-const counters = new Map<string, { day: string; count: number; minute: number; minuteCount: number }>();
+const publicCalls = createCallLimiter();
+const mcpCalls = createCallLimiter();
 
 const trustedSources = () => [
   ["yahoo-shopping","Yahoo!ショッピング","general retail"],
@@ -66,16 +69,19 @@ const trustedSources = () => [
     health: searchable || soldCompsCapable ? "healthy" : "disabled",
   };
 });
+router.use("/v1", (_req, res, next) => {
+  // A cached current-price response must not defeat the 2-minute auction freshness rule.
+  res.setHeader("Cache-Control", "no-store");
+  next();
+});
 router.use("/v1/public", (req, res, next) => {
-  const key = req.ip || "unknown", now = new Date(), day = now.toISOString().slice(0,10), minute = Math.floor(Date.now()/60000);
-  const hit = counters.get(key) || { day, count: 0, minute, minuteCount: 0 };
-  if (hit.day !== day) Object.assign(hit, { day, count: 0 });
-  if (hit.minute !== minute) Object.assign(hit, { minute, minuteCount: 0 });
-  hit.count++; hit.minuteCount++; counters.set(key, hit);
   res.setHeader("X-RateLimit-Daily-Limit", "500");
-  if (hit.count > 500 || hit.minuteCount > 30) { res.status(429).json({ error: "rate_limit_exceeded" }); return; }
-  res.setHeader("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
-  next(); return;
+  if (!publicCalls(req.ip || "unknown")) {
+    res.setHeader("Retry-After", "60");
+    res.status(429).json({ error: "rate_limit_exceeded" });
+    return;
+  }
+  next();
 });
 
 async function genericVerify(raw: string) {
@@ -211,17 +217,17 @@ router.get("/v1/public/search-auctions", async (req,res) => {
 router.get("/v1/public/source-health", async (_req,res): Promise<void> => {
   res.json(await sourceHealth());
 });
-router.get("/v1/source-coverage", (_req,res) => {
+router.get(["/v1/source-coverage", "/v1/public/source-coverage"], (_req,res) => {
   const sources = trustedSources();
   res.json({ ...computeCoverage(sources), sources });
 });
-router.get("/v1/price-history", async (req,res): Promise<void> => {
+router.get(["/v1/price-history", "/v1/public/price-history"], async (req,res): Promise<void> => {
   res.json(priceHistoryResponse(await getStoredPriceHistory(queryFrom(req.query.identity))));
 });
-router.get("/v1/sold-comps", async (req,res): Promise<void> => {
+router.get(["/v1/sold-comps", "/v1/public/sold-comps"], async (req,res): Promise<void> => {
   res.json(await soldCompsRoute(req.query.q, req.query.limit, req.query.market));
 });
-router.get("/v1/compare", async (req,res) => {
+router.get(["/v1/compare", "/v1/public/compare"], async (req,res) => {
   try { res.json(await searchRoute(req.query.q, "products", req.query.limit)); }
   catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : "comparison_failed" }); }
 });
@@ -301,45 +307,46 @@ router.post("/v1/admin/trusted-domains", (req,res) => {
   catch (error) { res.status(400).json({ error:error instanceof Error ? error.message : "invalid_domain" }); }
 });
 
-router.get("/v1/setup-bundle", (req,res) => {
-  const forwardedProto = req.get("x-forwarded-proto")?.split(",")[0]?.trim();
-  const proto = forwardedProto === "https" || forwardedProto === "http" ? forwardedProto : req.protocol;
-  const forwardedHost = req.get("x-forwarded-host")?.split(",")[0]?.trim();
-  const candidateHost = forwardedHost || req.get("host") || "";
-  const host = /^[a-z0-9.-]+(?::\d+)?$/i.test(candidateHost) ? candidateHost : "localhost";
-  res.json(buildSetupBundle(`${proto}://${host}`));
+const setupFor = (req: Request) => {
+  const base = publicBaseUrl(process.env.PUBLIC_BASE_URL, req.headers, req.protocol);
+  return buildChatgptBundle(base, buildSetupBundle(base));
+};
+router.get(["/v1/setup-bundle", "/v1/public/setup-bundle"], (req, res) => {
+  try { res.json(setupFor(req)); }
+  catch { res.status(500).json({ error: "invalid_public_base_url_configuration" }); }
 });
 
-const toolNames = ["search_products","search_auctions","fetch_listing","get_price_history","get_sold_comps","compare_offers","verify_current_price","get_source_health","get_source_coverage"];
-router.post("/mcp", async (req,res) => {
-  const { id, method, params } = req.body || {};
-  if (method === "initialize") { res.json({ jsonrpc:"2.0",id,result:{ protocolVersion:"2025-06-18",capabilities:{tools:{}},serverInfo:{name:"market-intel-mcp",version:"1.0.0"} } }); return; }
-  if (method === "tools/list") { res.json({ jsonrpc:"2.0",id,result:{tools:toolNames.map(name=>({name,description:`Market Intel: ${name}`,inputSchema:{type:"object",properties:{q:{type:"string"},url:{type:"string"},market:{type:"string"}}}}))} }); return; }
-  if (method === "tools/call") {
-    const name = params?.name, args = params?.arguments || {};
-    try {
-      let data: unknown = { error:"unknown_tool" };
-      if (name === "verify_current_price" || name === "fetch_listing") data = await genericVerify(args.url);
-      else if (name === "search_products" || name === "compare_offers") data = await searchRoute(args.q, "products", args.limit);
-      else if (name === "search_auctions") data = await searchRoute(args.q, "auctions", args.limit);
-      else if (name === "get_source_health") data = await sourceHealth();
-      else if (name === "get_source_coverage") {
-        const sources = trustedSources();
-        data = { ...computeCoverage(sources), sources };
-      }
-      else if (name === "get_sold_comps") {
-        data = await soldCompsRoute(args.q, args.limit, args.market);
-      }
-      else if (name === "get_price_history") {
-        data = priceHistoryResponse(await getStoredPriceHistory(queryFrom(args.identity ?? args.q)));
-      }
-      else data = { query: args.q || "", results: [], providers_queried: [], generated_at: new Date().toISOString() };
-      res.json({ jsonrpc:"2.0", id, result:{ content:[{ type:"text", text:JSON.stringify(data) }], structuredContent:data } }); return;
-    } catch (error) {
-      res.json({ jsonrpc:"2.0", id, error:{ code:-32000, message:error instanceof Error ? error.message : "tool_failed" } }); return;
-    }
+router.all("/mcp", async (req, res): Promise<void> => {
+  const configuredOrigin = process.env.PUBLIC_BASE_URL?.trim();
+  let allowedOrigins = (process.env.MCP_ALLOWED_ORIGINS || "").split(",").map(value => value.trim()).filter(Boolean);
+  if (configuredOrigin) {
+    try { allowedOrigins = [...allowedOrigins, publicBaseUrl(configuredOrigin, {}, "https")]; }
+    catch { res.status(500).json({ error: "invalid_public_base_url_configuration" }); return; }
   }
-  res.status(400).json({ jsonrpc:"2.0", id, error:{ code:-32601, message:"Method not found" } }); return;
+  const reply = await handleMcpHttp({
+    method: req.method,
+    headers: req.headers,
+    body: req.body,
+    allowedOrigins,
+    allowToolCall: () => mcpCalls(req.ip || "unknown"),
+  }, {
+    search_products: args => searchRoute(args.q, "products", args.limit),
+    search_auctions: args => searchRoute(args.q, "auctions", args.limit),
+    fetch_listing: args => genericVerify(String(args.url)),
+    get_price_history: async args => priceHistoryResponse(await getStoredPriceHistory(queryFrom(args.identity ?? args.q))),
+    get_sold_comps: args => soldCompsRoute(args.q, args.limit, args.market),
+    compare_offers: args => searchRoute(args.q, "products", args.limit),
+    verify_current_price: args => genericVerify(String(args.url)),
+    get_source_health: () => sourceHealth(),
+    get_source_coverage: () => {
+      const sources = trustedSources();
+      return { ...computeCoverage(sources), sources };
+    },
+    get_setup_bundle: () => setupFor(req),
+  });
+  res.set(reply.headers).status(reply.status);
+  if (reply.body === undefined) res.end();
+  else res.json(reply.body);
 });
 
 export default router;

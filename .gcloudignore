@@ -1,0 +1,20 @@
+.git
+**/node_modules
+**/dist
+**/.env
+**/.env.*
+.env
+.env.*
+**/*.pem
+**/*.key
+**/*credentials*.json
+**/*service-account*.json
+**/.config
+.gcloud
+.replit
+.replitignore
+.agents
+coverage
+*.log
+# gcloud source upload must exclude secrets independently from Docker's context.
+.github

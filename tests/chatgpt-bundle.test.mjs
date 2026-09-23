@@ -1,0 +1,30 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { buildChatgptBundle } from '../artifacts/api-server/src/market/chatgptBundle.ts';
+const pack = [{ name: 'existing', prompt: 'original instruction', ical: 'original time' }];
+const legacy = { schedules: pack, full_schedule_pack: pack, core_6_pack: pack };
+test('preserve schedule templates but never claim they migrated existing tasks', () => {
+  const b = buildChatgptBundle('https://intel.example', legacy);
+  assert.equal(b.schedules[0].name, pack[0].name);
+  assert.equal(b.schedules[0].ical, pack[0].ical);
+  assert.match(b.schedules[0].prompt, /original instruction/);
+  assert.equal(b.schedule_migration.mode, 'preserve_existing');
+  assert.equal(b.schedule_migration.auto_create, false);
+  assert.equal(b.schedule_migration.timezone, 'Asia/Tokyo');
+  assert.match(b.chatgpt_setup_prompt, /14件/);
+  assert.match(b.chatgpt_setup_prompt, /上書きしない/);
+  assert.equal(legacy.schedules[0].prompt, 'original instruction');
+});
+test('distinguish hosted service from native ChatGPT registration and scheduled HTTP availability', () => {
+  const b = buildChatgptBundle('https://intel.example', legacy);
+  assert.equal(b.connection.mcp_url, 'https://intel.example/api/mcp');
+  assert.equal(b.connection.rest_base_url, 'https://intel.example/api/v1/public');
+  assert.equal(b.connection.chatgpt_registration, 'NOT_VERIFIED');
+  assert.equal(b.connection.scheduled_http_access, 'NOT_VERIFIED');
+  assert.match(b.research_policy, /500,000/);
+  assert.match(b.research_policy, /新品/);
+  assert.match(b.research_policy, /購入許可/);
+  assert.match(b.app_reproduction_prompt, /Cloud Run/);
+  assert.match(b.app_reproduction_prompt, /Replit Secrets/);
+  assert.doesNotMatch(JSON.stringify(b), /YAHOO_CLIENT_ID|EBAY_CLIENT_SECRET|DATABASE_URL/);
+});
